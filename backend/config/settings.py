@@ -182,6 +182,6 @@ EMBEDDING_DIMENSIONS = int(os.getenv('EMBEDDING_DIMENSIONS', '1536'))
 LLM_DRAFT_MODEL = os.getenv('LLM_DRAFT_MODEL', 'gpt-4o-mini')
 ALLOW_MOCK_LLM = os.getenv('ALLOW_MOCK_LLM', 'True').lower() in ('true', '1')
 
-ROUTING_SIMILARITY_THRESHOLD = float(os.getenv('ROUTING_SIMILARITY_THRESHOLD', '0.72'))
+ROUTING_SIMILARITY_THRESHOLD = float(os.getenv('ROUTING_SIMILARITY_THRESHOLD', '0.68'))
 ROUTING_TOP_K = int(os.getenv('ROUTING_TOP_K', '50'))
 ENABLE_LLM_JUDGE = os.getenv('ENABLE_LLM_JUDGE', 'False').lower() in ('true', '1')

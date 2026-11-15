@@ -1527,17 +1527,18 @@ export default function App() {
                     {new Date(selectedPost.created_at).toLocaleString()}
                   </p>
                 </div>
-                <div className="flex items-center space-x-2">
-                  {selectedPost.status !== 'rejected' && (
-                    <button
-                      onClick={() => handleModeratePost(selectedPost.id, 'reject')}
-                      disabled={moderatingPost}
-                      className="text-[11px] text-rose-600 hover:text-rose-800 font-semibold px-2 py-1 rounded hover:bg-rose-50 cursor-pointer"
-                      title="Reject post as administrator"
-                    >
-                      🛡️ Reject Post
-                    </button>
-                  )}
+                  <div className="flex items-center space-x-2 shrink-0">
+                    {selectedPost.status !== 'rejected' && (
+                      <button
+                        onClick={() => handleModeratePost(selectedPost.id, 'reject')}
+                        disabled={moderatingPost}
+                        className="text-[11px] text-rose-600 hover:text-rose-800 font-semibold px-2.5 py-1 rounded-lg border border-rose-200 hover:bg-rose-50 cursor-pointer whitespace-nowrap flex items-center gap-1 transition"
+                        title="Reject post as administrator"
+                      >
+                        <span>🛡️</span>
+                        <span>Reject Post</span>
+                      </button>
+                    )}
                   <button
                     onClick={() => {
                       handleDiscardDraft()
