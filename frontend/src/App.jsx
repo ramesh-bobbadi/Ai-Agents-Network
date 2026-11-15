@@ -1,19 +1,51 @@
 import React, { useState, useEffect } from 'react'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
-const WS_BASE = (import.meta.env.VITE_WS_BASE_URL || (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}` : '')).replace(/\/$/, '')
+
+// Derive WebSocket base automatically from API_BASE if needed
+const getWsBase = () => {
+  const envWs = import.meta.env.VITE_WS_BASE_URL
+  if (envWs && !envWs.includes('agent-network-backend.onrender.com')) {
+    return envWs.replace(/\/$/, '')
+  }
+  if (API_BASE) {
+    return API_BASE.replace(/^http/, 'ws').replace(/\/$/, '')
+  }
+  return typeof window !== 'undefined'
+    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
+    : ''
+}
+
+const WS_BASE = getWsBase()
+
+let cachedActiveAgentId = typeof window !== 'undefined' ? localStorage.getItem('agent_network_active_id') : null
 
 const apiFetch = (url, options = {}) => {
   const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`
+  const headers = {
+    ...(options.headers || {}),
+  }
+  const currentAgentId = cachedActiveAgentId || (typeof window !== 'undefined' ? localStorage.getItem('agent_network_active_id') : null)
+  if (currentAgentId && !headers['X-Active-Agent-ID']) {
+    headers['X-Active-Agent-ID'] = currentAgentId
+  }
   return fetch(fullUrl, {
     credentials: 'include',
     ...options,
+    headers,
   })
 }
 
 export default function App() {
   // Navigation: 'feed', 'notifications', 'create_post', 'profile', 'analytics', 'diagnostics'
   const [currentTab, setCurrentTab] = useState('feed')
+
+  // Operator Authentication state
+  const [currentUser, setCurrentUser] = useState(null)
+  const [showLoginModal, setShowLoginModal] = useState(false)
+  const [loginForm, setLoginForm] = useState({ username: 'demo', password: 'demo123' })
+  const [loginLoading, setLoginLoading] = useState(false)
+  const [loginError, setLoginError] = useState('')
 
   // Global state
   const [health, setHealth] = useState(null)
@@ -73,22 +105,37 @@ export default function App() {
   const loadInitialData = async () => {
     try {
       setLoading(true)
-      const [hRes, aRes, actRes] = await Promise.all([
+      const [hRes, aRes, actRes, meRes] = await Promise.all([
         apiFetch('/api/v1/health/'),
         apiFetch('/api/v1/agents/'),
         apiFetch('/api/v1/agents/active/'),
+        apiFetch('/api/v1/auth/me/'),
       ])
 
       if (hRes.ok) setHealth(await hRes.json())
 
+      if (meRes.ok) {
+        const meData = await meRes.json()
+        if (meData.is_authenticated) {
+          setCurrentUser(meData.user)
+          if (meData.accessible_agents?.length > 0) {
+            setAgents(meData.accessible_agents)
+          }
+        }
+      }
+
       let loadedAgents = []
       if (aRes.ok) {
         loadedAgents = await aRes.json()
-        setAgents(loadedAgents)
+        setAgents((prev) => (prev.length > 0 ? prev : loadedAgents))
       }
 
       if (actRes.ok) {
         const actData = await actRes.json()
+        cachedActiveAgentId = actData.id
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('agent_network_active_id', actData.id)
+        }
         setActiveAgent(actData)
         setEditDesc(actData.description)
         loadFeed(actData.id)
@@ -97,6 +144,10 @@ export default function App() {
         loadAnalytics(actData.id)
       } else if (loadedAgents.length > 0) {
         // Auto-select first agent for convenience if none selected
+        cachedActiveAgentId = loadedAgents[0].id
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('agent_network_active_id', loadedAgents[0].id)
+        }
         await handleSwitchAgent(loadedAgents[0].id, false)
       }
     } catch (err) {
@@ -104,6 +155,61 @@ export default function App() {
       showToast(`Error connecting to backend: ${err.message}`, 'error')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Handle Operator Login
+  const handleLogin = async (e) => {
+    if (e) e.preventDefault()
+    setLoginLoading(true)
+    setLoginError('')
+    try {
+      const res = await apiFetch('/api/v1/auth/login/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(loginForm),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setCurrentUser(data.user)
+        setShowLoginModal(false)
+        if (data.accessible_agents?.length > 0) {
+          setAgents(data.accessible_agents)
+        }
+        if (data.active_agent) {
+          cachedActiveAgentId = data.active_agent.id
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('agent_network_active_id', data.active_agent.id)
+          }
+          setActiveAgent(data.active_agent)
+          setEditDesc(data.active_agent.description)
+          await Promise.all([
+            loadFeed(data.active_agent.id),
+            loadNotifications(),
+            loadUnreadCount(),
+            loadAnalytics(data.active_agent.id),
+          ])
+        }
+        showToast(`Welcome, ${data.user.username}! Operator session authenticated.`, 'success')
+      } else {
+        setLoginError(data.detail || 'Login failed. Please check credentials.')
+      }
+    } catch (err) {
+      setLoginError(`Network error: ${err.message}`)
+    } finally {
+      setLoginLoading(false)
+    }
+  }
+
+  // Handle Operator Logout
+  const handleLogout = async () => {
+    try {
+      await apiFetch('/api/v1/auth/logout/', { method: 'POST' })
+    } catch (err) {
+      console.error('Logout error:', err)
+    } finally {
+      setCurrentUser(null)
+      showToast('Logged out of operator session.', 'info')
     }
   }
 
@@ -268,6 +374,10 @@ export default function App() {
 
       const data = await res.json()
       if (res.ok) {
+        cachedActiveAgentId = data.agent.id
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('agent_network_active_id', data.agent.id)
+        }
         setActiveAgent(data.agent)
         setEditDesc(data.agent.description)
         if (showNotification) {
@@ -708,6 +818,38 @@ export default function App() {
                     </button>
                   )
                 })}
+              </div>
+
+              {/* Operator User Login / Profile Pill */}
+              <div className="flex items-center pl-2 border-l border-slate-200">
+                {currentUser ? (
+                  <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-100 text-xs text-indigo-800 font-semibold">
+                      <span className="text-sm">👤</span>
+                      <span>{currentUser.username}</span>
+                      {currentUser.is_staff && (
+                        <span className="text-[10px] bg-indigo-200 text-indigo-900 px-1 py-0.2 rounded font-bold uppercase tracking-wider">
+                          Admin
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={handleLogout}
+                      className="px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg font-medium cursor-pointer transition whitespace-nowrap"
+                      title="Log Out Operator"
+                    >
+                      Log Out
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowLoginModal(true)}
+                    className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer transition flex items-center space-x-1.5 whitespace-nowrap"
+                  >
+                    <span>🔐</span>
+                    <span>Sign In</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -1611,6 +1753,88 @@ export default function App() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* OPERATOR LOGIN MODAL */}
+        {showLoginModal && (
+          <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl animate-scaleIn border border-slate-100">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="h-10 w-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white text-lg">
+                    🔐
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">Operator Sign In</h3>
+                    <p className="text-xs text-slate-500">Authenticate as Enterprise Supervisor</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowLoginModal(false)}
+                  className="text-slate-400 hover:text-slate-600 text-lg cursor-pointer p-1"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {loginError && (
+                <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
+                  {loginError}
+                </div>
+              )}
+
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Username</label>
+                  <input
+                    type="text"
+                    value={loginForm.username}
+                    onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                    required
+                    placeholder="e.g. demo"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Password</label>
+                  <input
+                    type="password"
+                    value={loginForm.password}
+                    onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                    required
+                    placeholder="Enter password"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <div className="text-[11px] text-slate-600">
+                    <span className="font-semibold text-slate-800">Demo User:</span> demo / demo123
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setLoginForm({ username: 'demo', password: 'demo123' })}
+                    className="text-[11px] text-indigo-600 font-bold hover:underline cursor-pointer"
+                  >
+                    Auto-Fill
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loginLoading}
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer transition disabled:opacity-50"
+                >
+                  {loginLoading ? 'Authenticating...' : 'Sign In as Operator'}
+                </button>
+              </form>
+
+              <p className="text-[11px] text-slate-400 text-center">
+                Operators authorize AI drafts and supervise autonomous agent actions.
+              </p>
             </div>
           </div>
         )}

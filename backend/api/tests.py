@@ -831,3 +831,54 @@ class Phase7TrustFeedbackAndAnalyticsTests(TestCase):
         first_entry = data['history'][0]
         self.assertEqual(first_entry['post_id'], str(self.post.id))
         self.assertIn(first_entry['decision'], ['notified', 'below_threshold', 'excluded'])
+
+
+class AuthSystemTests(TestCase):
+    """
+    Tests operator authentication:
+    - Login with valid credentials
+    - Login rejection with invalid credentials
+    - Auth me endpoint reporting active status and accessible agents
+    - Logout clearing session
+    """
+    def setUp(self):
+        self.client = APIClient()
+        call_command('seed_agents')
+        self.login_url = reverse('auth-login')
+        self.logout_url = reverse('auth-logout')
+        self.me_url = reverse('auth-me')
+
+    def test_login_success(self):
+        res = self.client.post(self.login_url, {'username': 'demo', 'password': 'demo123'})
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        data = res.json()
+        self.assertEqual(data['user']['username'], 'demo')
+        self.assertEqual(len(data['accessible_agents']), 5)
+        self.assertIsNotNone(data['active_agent'])
+
+    def test_login_invalid_credentials(self):
+        res = self.client.post(self.login_url, {'username': 'demo', 'password': 'wrongpassword'})
+        self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_auth_me_and_logout(self):
+        # Unauthenticated me
+        res = self.client.get(self.me_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertFalse(res.json()['is_authenticated'])
+
+        # Login
+        self.client.post(self.login_url, {'username': 'demo', 'password': 'demo123'})
+
+        # Authenticated me
+        res = self.client.get(self.me_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.json()['is_authenticated'])
+        self.assertEqual(res.json()['user']['username'], 'demo')
+
+        # Logout
+        res = self.client.post(self.logout_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # Check unauthenticated again
+        res = self.client.get(self.me_url)
+        self.assertFalse(res.json()['is_authenticated'])

@@ -1,6 +1,7 @@
 from django.db import connection, models
 from django.utils import timezone
 from django.conf import settings
+from django.contrib.auth import authenticate, login, logout
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics, exceptions
@@ -678,3 +679,108 @@ class PostModerateView(APIView):
                 {"detail": "Invalid action. Choose 'reject' or 'publish'."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+
+class AuthLoginView(APIView):
+    """
+    POST /api/v1/auth/login/
+    Logs in an operator user and returns user details and authorized agents.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        username = request.data.get('username', '').strip()
+        password = request.data.get('password', '').strip()
+
+        if not username or not password:
+            return Response(
+                {"detail": "Username and password are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = authenticate(request, username=username, password=password)
+        if not user:
+            return Response(
+                {"detail": "Invalid username or password."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        login(request, user)
+
+        # Retrieve authorized agents for this user
+        if user.is_staff:
+            accessible_agents = Agent.objects.filter(is_active=True)
+        else:
+            accessible_agents = Agent.objects.filter(
+                user_access__user=user,
+                is_active=True
+            ).distinct()
+
+        active_agent = accessible_agents.first()
+        if active_agent:
+            request.session['active_agent_id'] = str(active_agent.id)
+
+        return Response({
+            "message": f"Welcome, {user.username}!",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "is_staff": user.is_staff,
+            },
+            "accessible_agents": AgentSerializer(accessible_agents, many=True).data,
+            "active_agent": AgentSerializer(active_agent).data if active_agent else None,
+        }, status=status.HTTP_200_OK)
+
+
+class AuthLogoutView(APIView):
+    """
+    POST /api/v1/auth/logout/
+    Logs out the current operator and clears active session.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        if hasattr(request, 'session'):
+            request.session.flush()
+        logout(request)
+        return Response({"message": "Logged out successfully."}, status=status.HTTP_200_OK)
+
+
+class AuthMeView(APIView):
+    """
+    GET /api/v1/auth/me/
+    Returns current authenticated operator status and accessible agents.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        if not request.user.is_authenticated:
+            return Response({
+                "is_authenticated": False,
+                "user": None,
+                "accessible_agents": [],
+            }, status=status.HTTP_200_OK)
+
+        user = request.user
+        if user.is_staff:
+            accessible_agents = Agent.objects.filter(is_active=True)
+        else:
+            accessible_agents = Agent.objects.filter(
+                user_access__user=user,
+                is_active=True
+            ).distinct()
+
+        active_agent = get_active_agent(request)
+
+        return Response({
+            "is_authenticated": True,
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "is_staff": user.is_staff,
+            },
+            "accessible_agents": AgentSerializer(accessible_agents, many=True).data,
+            "active_agent": AgentSerializer(active_agent).data if active_agent else None,
+        }, status=status.HTTP_200_OK)

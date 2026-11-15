@@ -16,9 +16,17 @@ from .views import (
     NotificationUnreadCountView,
     NotificationMarkReadView,
     NotificationDismissView,
+    AuthLoginView,
+    AuthLogoutView,
+    AuthMeView,
 )
 
 urlpatterns = [
+    # Operator authentication
+    path('auth/login/', AuthLoginView.as_view(), name='auth-login'),
+    path('auth/logout/', AuthLogoutView.as_view(), name='auth-logout'),
+    path('auth/me/', AuthMeView.as_view(), name='auth-me'),
+
     # Health check
     path('health/', HealthCheckView.as_view(), name='health-check'),
 
