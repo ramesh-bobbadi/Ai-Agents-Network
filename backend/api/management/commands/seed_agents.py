@@ -136,6 +136,11 @@ class Command(BaseCommand):
                 self.style.SUCCESS(f"  [+] {status_str} Agent: {agent.company_name} ({len(item['interests'])} interests)")
             )
 
+        # Synchronize interest embeddings
+        from api.services.embedding import EmbeddingService
+        synced_count = EmbeddingService.sync_interest_embeddings()
+        self.stdout.write(self.style.SUCCESS(f"  [+] Generated vector embeddings for {synced_count} interests."))
+
         self.stdout.write(self.style.SUCCESS("\n--- Canonical Agent API Keys (Keep secure) ---"))
         for name, key in generated_keys.items():
             self.stdout.write(f"  {name:12}: {key}")

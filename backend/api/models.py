@@ -4,7 +4,7 @@ import hashlib
 from django.db import models
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from pgvector.django import VectorField
+from pgvector.django import VectorField, HnswIndex
 
 User = get_user_model()
 
@@ -35,7 +35,6 @@ class Agent(models.Model):
 
     @staticmethod
     def generate_api_key():
-        """Generates a raw key and its SHA-256 hash."""
         raw_key = f"agent_{secrets.token_urlsafe(32)}"
         key_hash = hashlib.sha256(raw_key.encode('utf-8')).hexdigest()
         return raw_key, key_hash
@@ -67,6 +66,15 @@ class AgentInterest(models.Model):
     class Meta:
         ordering = ['agent', 'topic']
         unique_together = ('agent', 'topic')
+        indexes = [
+            HnswIndex(
+                name='agent_interest_emb_hnsw_idx',
+                fields=['embedding'],
+                m=16,
+                ef_construction=64,
+                opclasses=['vector_cosine_ops'],
+            ),
+        ]
 
     def __str__(self):
         return f"{self.agent.company_name} -> {self.topic}"
@@ -87,3 +95,97 @@ class UserAgentAccess(models.Model):
 
     def __str__(self):
         return f"User {self.user.username} can act as {self.agent.company_name}"
+
+
+class Post(models.Model):
+    """
+    Business update, offer, or market announcement published by an active agent.
+    """
+    STATUS_CHOICES = [
+        ('pending_routing', 'Pending Routing'),
+        ('published', 'Published'),
+        ('rejected', 'Rejected'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    author_agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='posts')
+    title = models.CharField(max_length=255)
+    content = models.TextField()
+    post_embedding = VectorField(
+        dimensions=settings.EMBEDDING_DIMENSIONS,
+        null=True,
+        blank=True,
+        help_text=f"Post dense vector embedding ({settings.EMBEDDING_DIMENSIONS}-dim)"
+    )
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='pending_routing', db_index=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.author_agent.company_name}: {self.title}"
+
+
+class Notification(models.Model):
+    """
+    Routing notification delivered exclusively to relevant candidate agents.
+    """
+    STATUS_CHOICES = [
+        ('unread', 'Unread'),
+        ('read', 'Read'),
+        ('engaged', 'Engaged'),
+        ('dismissed', 'Dismissed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='notifications')
+    recipient_agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='notifications')
+    relevance_score = models.FloatField(help_text="Cosine similarity score (0.0 - 1.0)")
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='unread', db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = ('post', 'recipient_agent')  # Prevents duplicate deliveries
+
+    def __str__(self):
+        return f"To {self.recipient_agent.company_name} for '{self.post.title}' (score: {self.relevance_score:.2f})"
+
+
+class RoutingLog(models.Model):
+    """
+    Audit log of all evaluated candidates for a post, including non-notified candidates.
+    Drives evaluation metrics, tuning, and feedback analysis.
+    """
+    DECISION_CHOICES = [
+        ('notified', 'Notified'),
+        ('below_threshold', 'Below Threshold'),
+        ('excluded', 'Excluded by Rule'),
+        ('failed', 'Routing Failed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='routing_logs')
+    target_agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='routing_logs')
+    matched_interest = models.ForeignKey(
+        AgentInterest,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='routing_logs'
+    )
+    vector_score = models.FloatField(help_text="Semantic cosine similarity (1 - cosine distance)")
+    judge_score = models.FloatField(null=True, blank=True, help_text="Optional LLM judge score")
+    decision = models.CharField(max_length=30, choices=DECISION_CHOICES, db_index=True)
+    reason = models.TextField(blank=True, default="", help_text="Audit explanation or LLM rationale")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Post '{self.post.title}' -> {self.target_agent.company_name}: {self.decision} ({self.vector_score:.2f})"

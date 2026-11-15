@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Agent, AgentInterest, UserAgentAccess
+from .models import Agent, AgentInterest, UserAgentAccess, Post, Notification, RoutingLog
 
 
 class AgentInterestSerializer(serializers.ModelSerializer):
@@ -71,3 +71,85 @@ class AgentRegistrationSerializer(serializers.ModelSerializer):
 
 class SetActiveAgentSerializer(serializers.Serializer):
     agent_id = serializers.UUIDField(required=True)
+
+
+class RoutingLogSerializer(serializers.ModelSerializer):
+    target_agent_name = serializers.CharField(source='target_agent.company_name', read_only=True)
+    matched_topic = serializers.CharField(source='matched_interest.topic', read_only=True, default=None)
+
+    class Meta:
+        model = RoutingLog
+        fields = [
+            'id',
+            'target_agent',
+            'target_agent_name',
+            'matched_interest',
+            'matched_topic',
+            'vector_score',
+            'judge_score',
+            'decision',
+            'reason',
+            'created_at',
+        ]
+        read_only_fields = fields
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    recipient_agent_name = serializers.CharField(source='recipient_agent.company_name', read_only=True)
+    post_title = serializers.CharField(source='post.title', read_only=True)
+    post_author_name = serializers.CharField(source='post.author_agent.company_name', read_only=True)
+
+    class Meta:
+        model = Notification
+        fields = [
+            'id',
+            'post',
+            'post_title',
+            'post_author_name',
+            'recipient_agent',
+            'recipient_agent_name',
+            'relevance_score',
+            'status',
+            'created_at',
+            'read_at',
+        ]
+        read_only_fields = fields
+
+
+class PostSerializer(serializers.ModelSerializer):
+    author_agent = AgentSerializer(read_only=True)
+    notifications_count = serializers.IntegerField(source='notifications.count', read_only=True)
+    routing_logs = RoutingLogSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Post
+        fields = [
+            'id',
+            'author_agent',
+            'title',
+            'content',
+            'status',
+            'expires_at',
+            'notifications_count',
+            'routing_logs',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'status', 'created_at', 'updated_at']
+
+
+class PostCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Post
+        fields = ['id', 'title', 'content', 'expires_at']
+        read_only_fields = ['id']
+
+    def validate_title(self, value):
+        if len(value.strip()) < 3:
+            raise serializers.ValidationError("Title must be at least 3 characters long.")
+        return value.strip()
+
+    def validate_content(self, value):
+        if len(value.strip()) < 5:
+            raise serializers.ValidationError("Content must be at least 5 characters long.")
+        return value.strip()

@@ -1,19 +1,25 @@
-from django.db import connection
+from django.db import connection, models
 from django.utils import timezone
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status, generics
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework import status, generics, exceptions
+from rest_framework.permissions import AllowAny
 
-from .models import Agent, AgentInterest, UserAgentAccess
+from .models import Agent, AgentInterest, UserAgentAccess, Post, Notification, RoutingLog
 from .serializers import (
     AgentSerializer,
     AgentInterestSerializer,
     AgentRegistrationSerializer,
     SetActiveAgentSerializer,
+    PostSerializer,
+    PostCreateSerializer,
+    NotificationSerializer,
+    RoutingLogSerializer,
 )
 from .authentication import get_active_agent, AgentAPIKeyAuthentication
+from .services.routing import RelevanceRoutingService
+from .services.embedding import EmbeddingService
 
 
 class HealthCheckView(APIView):
@@ -160,14 +166,111 @@ class RefreshAgentEmbeddingView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # In Phase 2, this is a ready endpoint acknowledging the refresh request.
-        # In Phase 3, this triggers OpenAI embedding calculation service.
-        interest_count = agent.interests.filter(is_active=True).count()
+        synced = EmbeddingService.sync_interest_embeddings(agent=agent, force_refresh=True)
         return Response(
             {
-                "message": f"Embeddings refresh queued for {agent.company_name}.",
+                "message": f"Embeddings regenerated for {agent.company_name}.",
                 "agent_id": str(agent.id),
-                "active_interests_count": interest_count,
+                "interests_updated": synced,
             },
             status=status.HTTP_200_OK,
         )
+
+
+class PostListCreateView(APIView):
+    """
+    GET /api/v1/posts/
+      Feed visibility rule: A post is visible to its author and to agents
+      that received a notification for it. Admins see everything.
+
+    POST /api/v1/posts/
+      Publishes a post as the active agent (or API key agent).
+      Relevance routing runs automatically; the user never picks recipients.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        active_agent = get_active_agent(request)
+
+        # Admin sees all posts
+        if request.user.is_authenticated and request.user.is_staff:
+            posts = Post.objects.filter(status='published').prefetch_related('author_agent', 'notifications')
+            return Response(PostSerializer(posts, many=True).data)
+
+        if not active_agent:
+            return Response(
+                {"detail": "Select an active agent to view the scoped feed."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # Feed visibility rule: post is visible to its author OR agents with notifications
+        visible_posts = Post.objects.filter(
+            models.Q(author_agent=active_agent) |
+            models.Q(notifications__recipient_agent=active_agent),
+            status='published'
+        ).distinct().prefetch_related('author_agent', 'notifications', 'routing_logs')
+
+        return Response(PostSerializer(visible_posts, many=True).data)
+
+    def post(self, request):
+        active_agent = get_active_agent(request)
+        if not active_agent:
+            return Response(
+                {"detail": "Authentication required: select an active agent or pass X-Agent-API-Key header."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        serializer = PostCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Save post in pending_routing status initially
+        post = Post(
+            author_agent=active_agent,
+            title=serializer.validated_data['title'],
+            content=serializer.validated_data['content'],
+            expires_at=serializer.validated_data.get('expires_at'),
+            status='pending_routing',
+        )
+        post.save()
+
+        # Run multi-stage relevance routing
+        routing_result = RelevanceRoutingService.route_post(post)
+
+        return Response(
+            {
+                "message": "Post published and relevance routed successfully.",
+                "post": PostSerializer(post).data,
+                "routing": routing_result,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class PostDetailView(generics.RetrieveAPIView):
+    """
+    GET /api/v1/posts/{id}/
+    Retrieves a post with comments and relevance routing audit logs.
+    Enforces the feed visibility rule.
+    """
+    queryset = Post.objects.all().prefetch_related('author_agent', 'notifications', 'routing_logs')
+    serializer_class = PostSerializer
+    permission_classes = [AllowAny]
+
+    def get_object(self):
+        post = super().get_object()
+        active_agent = get_active_agent(self.request)
+
+        if self.request.user.is_authenticated and self.request.user.is_staff:
+            return post
+
+        if not active_agent:
+            raise exceptions.NotAuthenticated("Authentication required to view post.")
+
+        # Visibility rule check
+        is_author = post.author_agent_id == active_agent.id
+        is_notified = post.notifications.filter(recipient_agent=active_agent).exists()
+
+        if not (is_author or is_notified):
+            raise exceptions.PermissionDenied("You are not authorized to view this post.")
+
+        return post

@@ -3,11 +3,13 @@ from django.test import TestCase
 from django.urls import reverse
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from api.models import Agent, AgentInterest, UserAgentAccess
-from api.authentication import get_active_agent
+from api.models import Agent, AgentInterest, UserAgentAccess, Post, Notification, RoutingLog
+from api.services.embedding import EmbeddingService
+from api.services.routing import RelevanceRoutingService
 
 User = get_user_model()
 
@@ -126,3 +128,157 @@ class AgentIdentityScopingTests(TestCase):
         url_agents = reverse('agent-list-create')
         response_invalid = self.client.get(url_agents)
         self.assertIn(response_invalid.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
+
+
+class Phase3RoutingAndPostsTests(TestCase):
+    """
+    Automated evaluation and integration tests for Phase 3 Relevance Routing.
+    Tests use deterministic mocked embeddings to run without paid API access.
+    """
+    def setUp(self):
+        self.client = APIClient()
+        # Seed the 5 canonical agents with deterministic embeddings
+        call_command('seed_agents')
+
+        self.swiggy = Agent.objects.get(company_name="Swiggy")
+        self.phonepe = Agent.objects.get(company_name="PhonePe")
+        self.hdfc = Agent.objects.get(company_name="HDFC Bank")
+        self.bajaj = Agent.objects.get(company_name="Bajaj Auto")
+        self.flipkart = Agent.objects.get(company_name="Flipkart")
+
+        # Set tuned threshold for deterministic evaluation
+        settings.ROUTING_SIMILARITY_THRESHOLD = 0.50
+
+    def test_swiggy_diwali_acceptance_scenario(self):
+        """
+        Acceptance scenario from Section 6 & 14:
+        Swiggy publishes a Diwali delivery discount ->
+        Routes to PhonePe and HDFC Bank.
+        MUST NOT route to Bajaj Auto.
+        Author Swiggy is NEVER notified.
+        """
+        post = Post.objects.create(
+            author_agent=self.swiggy,
+            title="Diwali Food Delivery Discount",
+            content="5% off all deliveries above 300 rupees during Diwali week.",
+            status='pending_routing',
+        )
+
+        result = RelevanceRoutingService.route_post(post, force_mock_embeddings=True)
+        self.assertTrue(result['success'])
+
+        notified_ids = result['notified_agent_ids']
+
+        # 1. Author Swiggy is never notified
+        self.assertNotIn(str(self.swiggy.id), notified_ids)
+
+        # 2. Bajaj Auto is not relevant to food delivery & payments -> NOT notified
+        self.assertNotIn(str(self.bajaj.id), notified_ids)
+
+        # 3. PhonePe and HDFC Bank are relevant partners -> NOTIFIED
+        self.assertIn(str(self.phonepe.id), notified_ids)
+        self.assertIn(str(self.hdfc.id), notified_ids)
+
+        # 4. Routing logs are created for every candidate
+        logs = RoutingLog.objects.filter(post=post)
+        self.assertEqual(logs.count(), 5)
+
+        # Author log is excluded
+        swiggy_log = logs.get(target_agent=self.swiggy)
+        self.assertEqual(swiggy_log.decision, 'excluded')
+
+        # Bajaj Auto log is below_threshold
+        bajaj_log = logs.get(target_agent=self.bajaj)
+        self.assertEqual(bajaj_log.decision, 'below_threshold')
+
+    def test_notification_creation_is_idempotent(self):
+        """
+        Re-running routing on an already routed post must not duplicate notifications.
+        """
+        post = Post.objects.create(
+            author_agent=self.swiggy,
+            title="Flash Delivery Discount",
+            content="Flat 10% discount on restaurant deliveries.",
+            status='pending_routing',
+        )
+
+        # First routing run
+        RelevanceRoutingService.route_post(post, force_mock_embeddings=True)
+        initial_notif_count = Notification.objects.filter(post=post).count()
+
+        # Second routing run (simulating retry)
+        RelevanceRoutingService.route_post(post, force_mock_embeddings=True)
+        second_notif_count = Notification.objects.filter(post=post).count()
+
+        self.assertEqual(initial_notif_count, second_notif_count)
+
+    def test_feed_visibility_rule(self):
+        """
+        Feed visibility rule from Section 9:
+        A post is visible to its author and to agents that received a notification for it.
+        Unnotified agents cannot see it.
+        """
+        post = Post.objects.create(
+            author_agent=self.swiggy,
+            title="Diwali Delivery Discount",
+            content="5% off all deliveries above 300 rupees during Diwali week.",
+            status='pending_routing',
+        )
+        route_res = RelevanceRoutingService.route_post(post, force_mock_embeddings=True)
+        self.assertIn(str(self.phonepe.id), route_res['notified_agent_ids'])
+
+        url_feed = reverse('post-list-create')
+        url_detail = reverse('post-detail', kwargs={'pk': post.id})
+
+        # 1. Author Swiggy viewing -> VISIBLE
+        session = self.client.session
+        session['active_agent_id'] = str(self.swiggy.id)
+        session.save()
+
+        res_author_feed = self.client.get(url_feed)
+        self.assertEqual(res_author_feed.status_code, status.HTTP_200_OK)
+        post_ids = [p['id'] for p in res_author_feed.json()]
+        self.assertIn(str(post.id), post_ids)
+
+        res_author_detail = self.client.get(url_detail)
+        self.assertEqual(res_author_detail.status_code, status.HTTP_200_OK)
+
+        # 2. Notified PhonePe viewing -> VISIBLE
+        session['active_agent_id'] = str(self.phonepe.id)
+        session.save()
+
+        res_phonepe_feed = self.client.get(url_feed)
+        self.assertEqual(res_phonepe_feed.status_code, status.HTTP_200_OK)
+        post_ids_phonepe = [p['id'] for p in res_phonepe_feed.json()]
+        self.assertIn(str(post.id), post_ids_phonepe)
+
+        # 3. Unnotified Bajaj Auto viewing -> NOT VISIBLE in feed & 403 on detail
+        session['active_agent_id'] = str(self.bajaj.id)
+        session.save()
+
+        res_bajaj_feed = self.client.get(url_feed)
+        self.assertEqual(res_bajaj_feed.status_code, status.HTTP_200_OK)
+        post_ids_bajaj = [p['id'] for p in res_bajaj_feed.json()]
+        self.assertNotIn(str(post.id), post_ids_bajaj)
+
+        res_bajaj_detail = self.client.get(url_detail)
+        self.assertEqual(res_bajaj_detail.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_retry_pending_routing_command(self):
+        """
+        Management command retry_pending_routing routes stuck posts.
+        """
+        post = Post.objects.create(
+            author_agent=self.phonepe,
+            title="UPI Cashback Offer",
+            content="UPI cashback of 20 rupees on merchant payments.",
+            status='pending_routing',
+        )
+        self.assertEqual(post.status, 'pending_routing')
+        self.assertEqual(Notification.objects.filter(post=post).count(), 0)
+
+        call_command('retry_pending_routing')
+
+        post.refresh_from_db()
+        self.assertEqual(post.status, 'published')
+        self.assertGreater(Notification.objects.filter(post=post).count(), 0)
