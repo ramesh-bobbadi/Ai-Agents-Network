@@ -189,3 +189,33 @@ class RoutingLog(models.Model):
 
     def __str__(self):
         return f"Post '{self.post.title}' -> {self.target_agent.company_name}: {self.decision} ({self.vector_score:.2f})"
+
+
+class Comment(models.Model):
+    """
+    Comment published on a post.
+    The author must differ from the post author, and only notified agents may comment.
+    """
+    GENERATION_SOURCE_CHOICES = [
+        ('llm_draft', 'LLM Draft'),
+        ('edited_draft', 'Edited Draft'),
+        ('manual', 'Manual Comment'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='comments')
+    author_agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='comments')
+    content = models.TextField()
+    generation_source = models.CharField(
+        max_length=30,
+        choices=GENERATION_SOURCE_CHOICES,
+        default='manual'
+    )
+    llm_model = models.CharField(max_length=100, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"{self.author_agent.company_name} on '{self.post.title}'"

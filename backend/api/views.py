@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework import status, generics, exceptions
 from rest_framework.permissions import AllowAny
 
-from .models import Agent, AgentInterest, UserAgentAccess, Post, Notification, RoutingLog
+from .models import Agent, AgentInterest, UserAgentAccess, Post, Notification, RoutingLog, Comment
 from .serializers import (
     AgentSerializer,
     AgentInterestSerializer,
@@ -16,6 +16,8 @@ from .serializers import (
     PostCreateSerializer,
     NotificationSerializer,
     RoutingLogSerializer,
+    CommentSerializer,
+    CommentCreateSerializer,
 )
 from .authentication import get_active_agent, AgentAPIKeyAuthentication
 from .services.routing import RelevanceRoutingService
@@ -194,7 +196,9 @@ class PostListCreateView(APIView):
 
         # Admin sees all posts
         if request.user.is_authenticated and request.user.is_staff:
-            posts = Post.objects.filter(status='published').prefetch_related('author_agent', 'notifications')
+            posts = Post.objects.filter(status='published').prefetch_related(
+                'author_agent', 'notifications', 'comments__author_agent', 'routing_logs'
+            )
             return Response(PostSerializer(posts, many=True).data)
 
         if not active_agent:
@@ -208,7 +212,9 @@ class PostListCreateView(APIView):
             models.Q(author_agent=active_agent) |
             models.Q(notifications__recipient_agent=active_agent),
             status='published'
-        ).distinct().prefetch_related('author_agent', 'notifications', 'routing_logs')
+        ).distinct().prefetch_related(
+            'author_agent', 'notifications', 'comments__author_agent', 'routing_logs'
+        )
 
         return Response(PostSerializer(visible_posts, many=True).data)
 
@@ -252,7 +258,9 @@ class PostDetailView(generics.RetrieveAPIView):
     Retrieves a post with comments and relevance routing audit logs.
     Enforces the feed visibility rule.
     """
-    queryset = Post.objects.all().prefetch_related('author_agent', 'notifications', 'routing_logs')
+    queryset = Post.objects.all().prefetch_related(
+        'author_agent', 'notifications', 'comments__author_agent', 'routing_logs'
+    )
     serializer_class = PostSerializer
     permission_classes = [AllowAny]
 
@@ -274,3 +282,59 @@ class PostDetailView(generics.RetrieveAPIView):
             raise exceptions.PermissionDenied("You are not authorized to view this post.")
 
         return post
+
+
+class CommentCreateView(APIView):
+    """
+    POST /api/v1/posts/{id}/comments/
+    Publishes a manual or edited comment as the active agent.
+    Rules:
+    - Author must differ from the post author.
+    - Only notified agents may comment.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, pk):
+        active_agent = get_active_agent(request)
+        if not active_agent:
+            return Response(
+                {"detail": "Authentication required: select an active agent or pass X-Agent-API-Key header."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        try:
+            post = Post.objects.get(id=pk, status='published')
+        except Post.DoesNotExist:
+            return Response(
+                {"detail": "Published post not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Rule 1: The author must differ from the post author
+        if post.author_agent_id == active_agent.id:
+            return Response(
+                {"detail": "The author agent is not permitted to comment on its own post."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Rule 2: Only notified agents may comment
+        is_staff = request.user.is_authenticated and request.user.is_staff
+        is_notified = post.notifications.filter(recipient_agent=active_agent).exists()
+        if not (is_staff or is_notified):
+            return Response(
+                {"detail": "Only agents that received a relevance notification for this post are permitted to comment."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = CommentCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        comment = Comment.objects.create(
+            post=post,
+            author_agent=active_agent,
+            content=serializer.validated_data['content'],
+            generation_source=serializer.validated_data.get('generation_source', 'manual'),
+            llm_model=serializer.validated_data.get('llm_model'),
+        )
+
+        return Response(CommentSerializer(comment).data, status=status.HTTP_201_CREATED)

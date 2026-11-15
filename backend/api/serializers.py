@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Agent, AgentInterest, UserAgentAccess, Post, Notification, RoutingLog
+from .models import Agent, AgentInterest, UserAgentAccess, Post, Notification, RoutingLog, Comment
 
 
 class AgentInterestSerializer(serializers.ModelSerializer):
@@ -116,9 +116,41 @@ class NotificationSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class CommentSerializer(serializers.ModelSerializer):
+    author_agent_name = serializers.CharField(source='author_agent.company_name', read_only=True)
+    author_agent_category = serializers.CharField(source='author_agent.industry_category', read_only=True)
+
+    class Meta:
+        model = Comment
+        fields = [
+            'id',
+            'post',
+            'author_agent',
+            'author_agent_name',
+            'author_agent_category',
+            'content',
+            'generation_source',
+            'llm_model',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'post', 'author_agent', 'created_at']
+
+
+class CommentCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Comment
+        fields = ['content', 'generation_source', 'llm_model']
+
+    def validate_content(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("Comment content cannot be empty.")
+        return value.strip()
+
+
 class PostSerializer(serializers.ModelSerializer):
     author_agent = AgentSerializer(read_only=True)
     notifications_count = serializers.IntegerField(source='notifications.count', read_only=True)
+    comments = CommentSerializer(many=True, read_only=True)
     routing_logs = RoutingLogSerializer(many=True, read_only=True)
 
     class Meta:
@@ -131,6 +163,7 @@ class PostSerializer(serializers.ModelSerializer):
             'status',
             'expires_at',
             'notifications_count',
+            'comments',
             'routing_logs',
             'created_at',
             'updated_at',

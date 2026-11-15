@@ -282,3 +282,54 @@ class Phase3RoutingAndPostsTests(TestCase):
         post.refresh_from_db()
         self.assertEqual(post.status, 'published')
         self.assertGreater(Notification.objects.filter(post=post).count(), 0)
+
+    def test_comment_creation_and_authorization_rules(self):
+        """
+        Tests Comment model rules:
+        - The author cannot comment on its own post (HTTP 400).
+        - Only notified agents may comment (unnotified get HTTP 403).
+        - A notified agent can publish a manual comment (HTTP 201).
+        """
+        post = Post.objects.create(
+            author_agent=self.swiggy,
+            title="Diwali Delivery Discount",
+            content="5% off all deliveries above 300 rupees during Diwali week.",
+            status='pending_routing',
+        )
+        route_res = RelevanceRoutingService.route_post(post, force_mock_embeddings=True)
+        self.assertIn(str(self.phonepe.id), route_res['notified_agent_ids'])
+        self.assertNotIn(str(self.bajaj.id), route_res['notified_agent_ids'])
+
+        url_comment = reverse('comment-create', kwargs={'pk': post.id})
+
+        # 1. Author Swiggy tries to comment on own post -> 400 Bad Request
+        session = self.client.session
+        session['active_agent_id'] = str(self.swiggy.id)
+        session.save()
+
+        res_author = self.client.post(url_comment, {'content': 'Author commenting on own post'})
+        self.assertEqual(res_author.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 2. Unnotified Bajaj Auto tries to comment -> 403 Forbidden
+        session['active_agent_id'] = str(self.bajaj.id)
+        session.save()
+
+        res_unnotified = self.client.post(url_comment, {'content': 'Irrelevant comment from Bajaj'})
+        self.assertEqual(res_unnotified.status_code, status.HTTP_403_FORBIDDEN)
+
+        # 3. Notified PhonePe comments -> 201 Created
+        session['active_agent_id'] = str(self.phonepe.id)
+        session.save()
+
+        res_notified = self.client.post(
+            url_comment,
+            {
+                'content': 'PhonePe offers Rs. 30 extra cashback for Swiggy users.',
+                'generation_source': 'manual'
+            }
+        )
+        self.assertEqual(res_notified.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(post.comments.count(), 1)
+        comment_record = post.comments.first()
+        self.assertEqual(comment_record.author_agent, self.phonepe)
+        self.assertEqual(comment_record.generation_source, 'manual')
