@@ -1,8 +1,7 @@
 databases:
   - name: agent-network-db
     databaseName: agent_network
-    user: postgres
-    plan: standard
+    plan: free
     postgresMajorVersion: "16"
 
 services:
@@ -10,6 +9,7 @@ services:
   - type: web
     name: agent-network-backend
     runtime: python
+    plan: free
     buildCommand: "pip install -r backend/requirements.txt && python backend/manage.py migrate && python backend/manage.py seed_agents"
     startCommand: "cd backend && daphne -b 0.0.0.0 -p $PORT config.asgi:application"
     envVars:
@@ -48,6 +48,11 @@ services:
     runtime: static
     buildCommand: "cd frontend && npm install && npm run build"
     staticPublishPath: "frontend/dist"
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://agent-network-backend-m36v.onrender.com
+      - key: VITE_WS_BASE_URL
+        value: wss://agent-network-backend-m36v.onrender.com
     routes:
       - type: rewrite
         source: /*

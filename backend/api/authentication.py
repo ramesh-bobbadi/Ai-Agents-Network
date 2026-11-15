@@ -37,22 +37,37 @@ def get_active_agent(request):
     Resolves the active agent for the current request.
     Priority:
     1. Direct API Key authentication (`request.agent`)
-    2. Session-based active agent (`request.session['active_agent_id']`)
+    2. Header-based active agent (`X-Active-Agent-ID`)
+    3. Query parameter `agent_id`
+    4. Session-based active agent (`request.session['active_agent_id']`)
     """
     # 1. API key authenticated agent
     if hasattr(request, 'agent') and request.agent:
         return request.agent
 
-    # 2. Session-based active agent
-    active_agent_id = request.session.get('active_agent_id')
+    # 2. Header-based active agent (essential for cross-origin decoupled SPAs)
+    active_agent_id = request.headers.get('X-Active-Agent-ID')
+
+    # 3. Query param fallback
+    if not active_agent_id:
+        if hasattr(request, 'query_params'):
+            active_agent_id = request.query_params.get('agent_id')
+        elif hasattr(request, 'GET'):
+            active_agent_id = request.GET.get('agent_id')
+
+    # 4. Session-based active agent
+    if not active_agent_id and hasattr(request, 'session'):
+        active_agent_id = request.session.get('active_agent_id')
+
     if not active_agent_id:
         return None
 
     try:
         agent = Agent.objects.get(id=active_agent_id, is_active=True)
-    except Agent.DoesNotExist:
+    except (Agent.DoesNotExist, ValueError):
         # Invalid or deleted agent in session
-        request.session.pop('active_agent_id', None)
+        if hasattr(request, 'session'):
+            request.session.pop('active_agent_id', None)
         return None
 
     # Check UserAgentAccess if user is logged in and not staff

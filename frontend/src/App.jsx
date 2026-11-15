@@ -260,7 +260,7 @@ export default function App() {
     try {
       setSwitching(true)
       handleDiscardDraft()
-      const res = await fetch('/api/v1/agents/active/', {
+      const res = await apiFetch('/api/v1/agents/active/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_id: agentId }),
@@ -293,7 +293,7 @@ export default function App() {
   const handleMarkRead = async (notifId, e) => {
     if (e) e.stopPropagation()
     try {
-      const res = await fetch(`/api/v1/notifications/${notifId}/read/`, {
+      const res = await apiFetch(`/api/v1/notifications/${notifId}/read/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })
@@ -315,7 +315,7 @@ export default function App() {
   const handleDismiss = async (notifId, e) => {
     if (e) e.stopPropagation()
     try {
-      const res = await fetch(`/api/v1/notifications/${notifId}/dismiss/`, {
+      const res = await apiFetch(`/api/v1/notifications/${notifId}/dismiss/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })
@@ -340,7 +340,7 @@ export default function App() {
     }
     try {
       handleDiscardDraft()
-      const res = await fetch(`/api/v1/posts/${notif.post}/`)
+      const res = await apiFetch(`/api/v1/posts/${notif.post}/`)
       if (res.ok) {
         const postData = await res.json()
         setSelectedPost(postData)
@@ -362,7 +362,7 @@ export default function App() {
 
     try {
       setPublishing(true)
-      const res = await fetch('/api/v1/posts/', {
+      const res = await apiFetch('/api/v1/posts/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -399,7 +399,7 @@ export default function App() {
 
     try {
       setSubmittingComment(true)
-      const res = await fetch(`/api/v1/posts/${postId}/comments/`, {
+      const res = await apiFetch(`/api/v1/posts/${postId}/comments/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -412,7 +412,7 @@ export default function App() {
       if (res.ok) {
         showToast('Comment published!', 'success')
         setCommentText('')
-        const updatedPostRes = await fetch(`/api/v1/posts/${postId}/`)
+        const updatedPostRes = await apiFetch(`/api/v1/posts/${postId}/`)
         if (updatedPostRes.ok) {
           const updatedPost = await updatedPostRes.json()
           setSelectedPost(updatedPost)
@@ -433,7 +433,7 @@ export default function App() {
   const handleGenerateDraft = async (postId) => {
     try {
       setDraftState({ loading: true, data: null, error: null, editedComment: '', isEdited: false })
-      const res = await fetch(`/api/v1/posts/${postId}/draft-comment/`, {
+      const res = await apiFetch(`/api/v1/posts/${postId}/draft-comment/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -484,7 +484,7 @@ export default function App() {
     try {
       setPublishingDraft(true)
       const generationSource = draftState.isEdited ? 'edited_draft' : 'llm_draft'
-      const res = await fetch(`/api/v1/posts/${postId}/comments/`, {
+      const res = await apiFetch(`/api/v1/posts/${postId}/comments/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -501,7 +501,7 @@ export default function App() {
           'success'
         )
         handleDiscardDraft()
-        const updatedPostRes = await fetch(`/api/v1/posts/${postId}/`)
+        const updatedPostRes = await apiFetch(`/api/v1/posts/${postId}/`)
         if (updatedPostRes.ok) {
           const updatedPost = await updatedPostRes.json()
           setSelectedPost(updatedPost)
@@ -533,7 +533,7 @@ export default function App() {
     if (!confirm(`Are you sure you want to ${action} this post as Administrator?`)) return
     try {
       setModeratingPost(true)
-      const res = await fetch(`/api/v1/posts/${postId}/moderate/`, {
+      const res = await apiFetch(`/api/v1/posts/${postId}/moderate/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, admin_override: true }),
@@ -559,7 +559,7 @@ export default function App() {
     if (!activeAgent) return
     try {
       setSavingProfile(true)
-      const res = await fetch(`/api/v1/agents/${activeAgent.id}/`, {
+      const res = await apiFetch(`/api/v1/agents/${activeAgent.id}/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: editDesc }),
@@ -583,7 +583,7 @@ export default function App() {
     if (!activeAgent) return
     try {
       setRefreshingEmb(true)
-      const res = await fetch(`/api/v1/agents/${activeAgent.id}/refresh-embedding/`, {
+      const res = await apiFetch(`/api/v1/agents/${activeAgent.id}/refresh-embedding/`, {
         method: 'POST',
       })
       const data = await res.json()
