@@ -239,6 +239,9 @@ class RelevanceRoutingService:
                         }
                     )
                     notifications_created.append(notif)
+                    if created:
+                        from .feedback import FeedbackService
+                        FeedbackService.record_event(item['target_agent'], post, 'notification_created')
 
             # Trigger real-time WebSocket signals post-commit
             transaction.on_commit(lambda: cls._emit_realtime_notifications(notifications_created))

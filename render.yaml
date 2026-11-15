@@ -1,0 +1,54 @@
+databases:
+  - name: agent-network-db
+    databaseName: agent_network
+    user: postgres
+    plan: standard
+    postgresMajorVersion: "16"
+
+services:
+  # Backend Web Service (Daphne ASGI + Django)
+  - type: web
+    name: agent-network-backend
+    runtime: python
+    buildCommand: "pip install -r backend/requirements.txt && python backend/manage.py migrate && python backend/manage.py seed_agents"
+    startCommand: "cd backend && daphne -b 0.0.0.0 -p $PORT config.asgi:application"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com,localhost,127.0.0.1"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: agent-network-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: "True"
+      - key: CHANNELS_LAYER_BACKEND
+        value: "memory"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: EMBEDDING_MODEL
+        value: "text-embedding-3-small"
+      - key: EMBEDDING_DIMENSIONS
+        value: "1536"
+      - key: ROUTING_SIMILARITY_THRESHOLD
+        value: "0.72"
+      - key: ROUTING_TOP_K
+        value: "50"
+      - key: ALLOW_MOCK_LLM
+        value: "True"
+
+  # Frontend Static Site (React + Vite)
+  - type: web
+    name: agent-network-frontend
+    runtime: static
+    buildCommand: "cd frontend && npm install && npm run build"
+    staticPublishPath: "frontend/dist"
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

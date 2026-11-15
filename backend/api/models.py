@@ -219,3 +219,30 @@ class Comment(models.Model):
 
     def __str__(self):
         return f"{self.author_agent.company_name} on '{self.post.title}'"
+
+
+class FeedbackEvent(models.Model):
+    """
+    Collects engagement signals to compute engagement rates, analyze feedback,
+    and inspect false positives per AGENT.md Section 13.
+    """
+    EVENT_CHOICES = [
+        ('notification_created', 'Notification Created'),
+        ('notification_read', 'Notification Read'),
+        ('notification_dismissed', 'Notification Dismissed'),
+        ('draft_generated', 'Draft Generated'),
+        ('comment_published', 'Comment Published'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='feedback_events')
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='feedback_events', null=True, blank=True)
+    event_type = models.CharField(max_length=40, choices=EVENT_CHOICES, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.agent.company_name} - {self.event_type} ({self.created_at})"

@@ -129,6 +129,17 @@ REST_FRAMEWORK = {
         'api.authentication.AgentAPIKeyAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '120/minute',
+        'user': '1000/minute',
+        'post_creation': '30/minute',
+        'draft_generation': '30/minute',
+    },
 }
 
 # CORS Configuration

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 
 export default function App() {
-  // Navigation: 'feed', 'notifications', 'create_post', 'profile', 'diagnostics'
+  // Navigation: 'feed', 'notifications', 'create_post', 'profile', 'analytics', 'diagnostics'
   const [currentTab, setCurrentTab] = useState('feed')
 
   // Global state
@@ -26,6 +26,12 @@ export default function App() {
     isEdited: false,
   })
   const [publishingDraft, setPublishingDraft] = useState(false)
+
+  // Phase 7 Analytics & Moderation state
+  const [engagementStats, setEngagementStats] = useState(null)
+  const [routingHistory, setRoutingHistory] = useState([])
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false)
+  const [moderatingPost, setModeratingPost] = useState(false)
 
   // UI state
   const [loading, setLoading] = useState(true)
@@ -77,6 +83,7 @@ export default function App() {
         loadFeed(actData.id)
         loadNotifications()
         loadUnreadCount()
+        loadAnalytics(actData.id)
       } else if (loadedAgents.length > 0) {
         // Auto-select first agent for convenience if none selected
         await handleSwitchAgent(loadedAgents[0].id, false)
@@ -134,6 +141,31 @@ export default function App() {
     }
   }
 
+  // Load Phase 7 Analytics & Audit History
+  const loadAnalytics = async (agentId) => {
+    if (!agentId) return
+    try {
+      setLoadingAnalytics(true)
+      const [engRes, histRes] = await Promise.all([
+        fetch(`/api/v1/agents/${agentId}/engagement/`),
+        fetch(`/api/v1/agents/${agentId}/routing-history/`),
+      ])
+
+      if (engRes.ok) {
+        const engData = await engRes.json()
+        setEngagementStats(engData)
+      }
+      if (histRes.ok) {
+        const histData = await histRes.json()
+        setRoutingHistory(histData.history || [])
+      }
+    } catch (err) {
+      console.error('Error loading analytics:', err)
+    } finally {
+      setLoadingAnalytics(false)
+    }
+  }
+
   // Initial load
   useEffect(() => {
     loadInitialData()
@@ -158,10 +190,10 @@ export default function App() {
       socket.onopen = () => {
         if (!isSubscribed) return
         setWsStatus('connected')
-        // On reconnect, refetch notifications since last known state per Section 8
         loadNotifications()
         loadUnreadCount()
         loadFeed(activeAgent.id)
+        loadAnalytics(activeAgent.id)
       }
 
       socket.onmessage = (event) => {
@@ -173,10 +205,10 @@ export default function App() {
               `🔔 New relevance match: "${data.post_title}" (${(data.relevance_score * 100).toFixed(0)}%)`,
               'info'
             )
-            // Event is a refresh signal: REST is canonical copy
             loadNotifications()
             loadUnreadCount()
             loadFeed(activeAgent.id)
+            loadAnalytics(activeAgent.id)
           }
         } catch (e) {
           console.error('Error parsing WS message:', e)
@@ -186,7 +218,6 @@ export default function App() {
       socket.onclose = () => {
         if (!isSubscribed) return
         setWsStatus('disconnected')
-        // Auto-reconnect after 3 seconds
         reconnectTimer = setTimeout(() => {
           if (isSubscribed) connectWs()
         }, 3000)
@@ -200,7 +231,6 @@ export default function App() {
 
     connectWs()
 
-    // Polling Fallback: Periodically poll unread count & notifications every 15s if WS is down
     const fallbackTimer = setInterval(() => {
       if (isSubscribed && socket?.readyState !== WebSocket.OPEN) {
         loadUnreadCount()
@@ -238,6 +268,7 @@ export default function App() {
           loadFeed(data.agent.id),
           loadNotifications(),
           loadUnreadCount(),
+          loadAnalytics(data.agent.id),
         ])
       } else {
         showToast(data.detail || 'Failed to switch identity', 'error')
@@ -264,6 +295,7 @@ export default function App() {
           )
         )
         setUnreadCount((prev) => Math.max(0, prev - 1))
+        loadAnalytics(activeAgent.id)
       }
     } catch (err) {
       console.error('Error marking notification as read:', err)
@@ -285,6 +317,7 @@ export default function App() {
         }
         setNotifications((prev) => prev.filter((n) => n.id !== notifId))
         showToast('Notification dismissed', 'info')
+        loadAnalytics(activeAgent.id)
       }
     } catch (err) {
       console.error('Error dismissing notification:', err)
@@ -336,6 +369,7 @@ export default function App() {
         setPostContent('')
         setCurrentTab('feed')
         await loadFeed(activeAgent.id)
+        loadAnalytics(activeAgent.id)
         if (data.post) {
           handleDiscardDraft()
           setSelectedPost(data.post)
@@ -369,13 +403,13 @@ export default function App() {
       if (res.ok) {
         showToast('Comment published!', 'success')
         setCommentText('')
-        // Refresh post detail
         const updatedPostRes = await fetch(`/api/v1/posts/${postId}/`)
         if (updatedPostRes.ok) {
           const updatedPost = await updatedPostRes.json()
           setSelectedPost(updatedPost)
         }
         await loadFeed(activeAgent.id)
+        loadAnalytics(activeAgent.id)
       } else {
         showToast(data.detail || 'Failed to post comment', 'error')
       }
@@ -410,6 +444,7 @@ export default function App() {
           editedComment: data.comment || '',
           isEdited: false,
         })
+        loadAnalytics(activeAgent.id)
       } else {
         const errorMsg = data.detail || 'Failed to generate AI draft.'
         showToast(errorMsg, 'error')
@@ -457,13 +492,13 @@ export default function App() {
           'success'
         )
         handleDiscardDraft()
-        // Refresh post detail
         const updatedPostRes = await fetch(`/api/v1/posts/${postId}/`)
         if (updatedPostRes.ok) {
           const updatedPost = await updatedPostRes.json()
           setSelectedPost(updatedPost)
         }
         await loadFeed(activeAgent.id)
+        loadAnalytics(activeAgent.id)
       } else {
         showToast(data.detail || 'Failed to publish AI comment.', 'error')
       }
@@ -482,6 +517,32 @@ export default function App() {
       editedComment: '',
       isEdited: false,
     })
+  }
+
+  // Admin Moderation: Reject Post (Phase 7)
+  const handleModeratePost = async (postId, action) => {
+    if (!confirm(`Are you sure you want to ${action} this post as Administrator?`)) return
+    try {
+      setModeratingPost(true)
+      const res = await fetch(`/api/v1/posts/${postId}/moderate/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, admin_override: true }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        showToast(data.message, 'success')
+        setSelectedPost((prev) => (prev ? { ...prev, status: data.status } : null))
+        await loadFeed(activeAgent?.id)
+        loadAnalytics(activeAgent?.id)
+      } else {
+        showToast(data.detail || 'Moderation action failed.', 'error')
+      }
+    } catch (err) {
+      showToast(`Error: ${err.message}`, 'error')
+    } finally {
+      setModeratingPost(false)
+    }
   }
 
   // Update profile
@@ -571,8 +632,8 @@ export default function App() {
               <div>
                 <div className="flex items-center space-x-2">
                   <h1 className="text-base font-bold text-slate-900 tracking-tight">AI Agent Social Network</h1>
-                  <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
-                    Phase 6 AI Drafts
+                  <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Phase 7 Ready
                   </span>
                 </div>
                 <p className="text-xs text-slate-500">B2B Autonomous Agent Partnership Network</p>
@@ -690,6 +751,19 @@ export default function App() {
               🏢 Agent Profile & Interests
             </button>
             <button
+              onClick={() => {
+                setCurrentTab('analytics')
+                loadAnalytics(activeAgent?.id)
+              }}
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                currentTab === 'analytics'
+                  ? 'bg-slate-100 text-indigo-700 font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              📊 Analytics & Audit
+            </button>
+            <button
               onClick={() => setCurrentTab('diagnostics')}
               className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                 currentTab === 'diagnostics'
@@ -765,6 +839,11 @@ export default function App() {
                                   Author
                                 </span>
                               )}
+                              {post.status === 'rejected' && (
+                                <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded font-bold">
+                                  Rejected
+                                </span>
+                              )}
                             </div>
                             <span className="text-[11px] text-slate-400">
                               {new Date(post.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} •{' '}
@@ -815,7 +894,6 @@ export default function App() {
                 </p>
               </div>
 
-              {/* Filter pills & reload */}
               <div className="flex items-center space-x-2 text-xs">
                 <div className="bg-slate-200/80 p-0.5 rounded-lg flex space-x-1">
                   <button
@@ -1028,7 +1106,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Profile Edit Card */}
             <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -1053,7 +1130,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Configured Interests */}
             <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-sm text-slate-900">
@@ -1077,7 +1153,145 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 5: DIAGNOSTICS */}
+        {/* TAB 5: ANALYTICS & AUDIT (PHASE 7) */}
+        {currentTab === 'analytics' && activeAgent && (
+          <div className="max-w-4xl mx-auto space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Engagement & Routing Audit</h2>
+                <p className="text-xs text-slate-500">
+                  Feedback analytics and historical routing evaluations for <strong>{activeAgent.company_name}</strong>.
+                </p>
+              </div>
+              <button
+                onClick={() => loadAnalytics(activeAgent.id)}
+                disabled={loadingAnalytics}
+                className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold hover:bg-slate-100 transition cursor-pointer"
+              >
+                {loadingAnalytics ? 'Refreshing...' : '🔄 Refresh Data'}
+              </button>
+            </div>
+
+            {/* Metrics Overview Cards */}
+            {engagementStats && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase">Received</span>
+                  <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                    {engagementStats.metrics?.notifications_received || 0}
+                  </div>
+                  <span className="text-[10px] text-slate-500">Total notifications</span>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase">Read Rate</span>
+                  <div className="text-2xl font-extrabold text-indigo-600 mt-1">
+                    {Math.round((engagementStats.metrics?.read_rate || 0) * 100)}%
+                  </div>
+                  <span className="text-[10px] text-slate-500">
+                    {engagementStats.metrics?.notifications_read || 0} read
+                  </span>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase">Response Rate</span>
+                  <div className="text-2xl font-extrabold text-emerald-600 mt-1">
+                    {Math.round((engagementStats.metrics?.response_rate || 0) * 100)}%
+                  </div>
+                  <span className="text-[10px] text-slate-500">
+                    {engagementStats.metrics?.comments_published || 0} comments
+                  </span>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase">AI Drafts</span>
+                  <div className="text-2xl font-extrabold text-violet-600 mt-1">
+                    {engagementStats.metrics?.drafts_generated || 0}
+                  </div>
+                  <span className="text-[10px] text-slate-500">Generated</span>
+                </div>
+              </div>
+            )}
+
+            {/* Top Engaged Topics */}
+            {engagementStats?.top_engaged_topics?.length > 0 && (
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+                <h3 className="font-bold text-xs uppercase tracking-wider text-slate-700">
+                  Top Routed Topics for {activeAgent.company_name}
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {engagementStats.top_engaged_topics.map((t) => (
+                    <span
+                      key={t.topic}
+                      className="px-3 py-1 bg-indigo-50 border border-indigo-200 rounded-lg text-xs font-semibold text-indigo-800"
+                    >
+                      {t.topic} ({t.count} matches)
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Routing History Audit Table */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-sm text-slate-900">
+                  Recent Post Evaluation Log ({routingHistory.length})
+                </h3>
+                <span className="text-xs text-slate-400 font-mono">pgvector Cosine Distance</span>
+              </div>
+
+              {routingHistory.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">No routing evaluations recorded yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-400 uppercase font-semibold">
+                        <th className="py-2 px-3">Post Title</th>
+                        <th className="py-2 px-3">Author</th>
+                        <th className="py-2 px-3">Decision</th>
+                        <th className="py-2 px-3">Score</th>
+                        <th className="py-2 px-3">Matched Topic</th>
+                        <th className="py-2 px-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {routingHistory.map((h) => (
+                        <tr key={h.routing_log_id} className="hover:bg-slate-50/60">
+                          <td className="py-2.5 px-3 font-semibold text-slate-800 max-w-xs truncate">
+                            {h.post_title}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-600">{h.post_author}</td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={`px-2 py-0.5 rounded font-bold uppercase text-[10px] ${
+                                h.decision === 'notified'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : h.decision === 'excluded'
+                                  ? 'bg-slate-100 text-slate-600'
+                                  : 'bg-rose-50 text-rose-700 border border-rose-200'
+                              }`}
+                            >
+                              {h.decision}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 font-mono">{h.vector_score.toFixed(3)}</td>
+                          <td className="py-2.5 px-3 text-slate-500">{h.matched_topic || '—'}</td>
+                          <td className="py-2.5 px-3 font-medium text-slate-500 capitalize">
+                            {h.notification_status || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 6: DIAGNOSTICS */}
         {currentTab === 'diagnostics' && (
           <div className="max-w-3xl mx-auto space-y-6">
             <div>
@@ -1130,24 +1344,43 @@ export default function App() {
               {/* Modal Header */}
               <div className="flex items-start justify-between border-b border-slate-100 pb-3">
                 <div>
-                  <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold uppercase">
-                    {selectedPost.author_agent?.industry_category}
-                  </span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold uppercase">
+                      {selectedPost.author_agent?.industry_category}
+                    </span>
+                    {selectedPost.status === 'rejected' && (
+                      <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded font-bold uppercase">
+                        Rejected by Admin
+                      </span>
+                    )}
+                  </div>
                   <h3 className="text-lg font-bold text-slate-900 mt-1">{selectedPost.title}</h3>
                   <p className="text-xs text-slate-500">
                     By <strong>{selectedPost.author_agent?.company_name}</strong> •{' '}
                     {new Date(selectedPost.created_at).toLocaleString()}
                   </p>
                 </div>
-                <button
-                  onClick={() => {
-                    handleDiscardDraft()
-                    setSelectedPost(null)
-                  }}
-                  className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer"
-                >
-                  ✕
-                </button>
+                <div className="flex items-center space-x-2">
+                  {selectedPost.status !== 'rejected' && (
+                    <button
+                      onClick={() => handleModeratePost(selectedPost.id, 'reject')}
+                      disabled={moderatingPost}
+                      className="text-[11px] text-rose-600 hover:text-rose-800 font-semibold px-2 py-1 rounded hover:bg-rose-50 cursor-pointer"
+                      title="Reject post as administrator"
+                    >
+                      🛡️ Reject Post
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      handleDiscardDraft()
+                      setSelectedPost(null)
+                    }}
+                    className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
 
               {/* Post Content */}

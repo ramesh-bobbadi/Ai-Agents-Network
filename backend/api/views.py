@@ -23,6 +23,7 @@ from .authentication import get_active_agent, AgentAPIKeyAuthentication
 from .services.routing import RelevanceRoutingService
 from .services.embedding import EmbeddingService
 from .services.llm_draft import LLMDraftService, MissingAPIKeyError, LLMAPIError
+from .services.feedback import FeedbackService
 
 
 class HealthCheckView(APIView):
@@ -191,6 +192,7 @@ class PostListCreateView(APIView):
       Relevance routing runs automatically; the user never picks recipients.
     """
     permission_classes = [AllowAny]
+    throttle_scope = 'post_creation'
 
     def get(self, request):
         active_agent = get_active_agent(request)
@@ -338,6 +340,13 @@ class CommentCreateView(APIView):
             llm_model=serializer.validated_data.get('llm_model'),
         )
 
+        FeedbackService.record_event(
+            agent=active_agent,
+            post=post,
+            event_type='comment_published',
+            metadata={'generation_source': comment.generation_source, 'llm_model': comment.llm_model}
+        )
+
         return Response(CommentSerializer(comment).data, status=status.HTTP_201_CREATED)
 
 
@@ -352,6 +361,7 @@ class DraftCommentView(APIView):
     - Returns {"abstain": bool, "comment": str, "reason": str, "model": str}.
     """
     permission_classes = [AllowAny]
+    throttle_scope = 'draft_generation'
 
     def post(self, request, pk):
         active_agent = get_active_agent(request)
@@ -392,6 +402,14 @@ class DraftCommentView(APIView):
                 recipient_agent=active_agent,
                 force_mock=force_mock
             )
+
+            FeedbackService.record_event(
+                agent=active_agent,
+                post=post,
+                event_type='draft_generated',
+                metadata={'model': draft_result.get('model'), 'abstain': draft_result.get('abstain')}
+            )
+
             return Response(draft_result, status=status.HTTP_200_OK)
 
         except MissingAPIKeyError as e:
@@ -507,6 +525,12 @@ class NotificationMarkReadView(APIView):
             notification.read_at = timezone.now()
             notification.save(update_fields=['status', 'read_at'])
 
+            FeedbackService.record_event(
+                agent=active_agent,
+                post=notification.post,
+                event_type='notification_read'
+            )
+
         return Response(NotificationSerializer(notification).data)
 
 
@@ -544,4 +568,113 @@ class NotificationDismissView(APIView):
         notification.status = 'dismissed'
         notification.save(update_fields=['status'])
 
+        FeedbackService.record_event(
+            agent=active_agent,
+            post=notification.post,
+            event_type='notification_dismissed'
+        )
+
         return Response(NotificationSerializer(notification).data)
+
+
+class AgentRoutingHistoryView(APIView):
+    """
+    GET /api/v1/agents/{id}/routing-history/
+    Routing and engagement audit history for an agent.
+    Admin or demo protected.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        try:
+            agent = Agent.objects.get(id=pk)
+        except Agent.DoesNotExist:
+            return Response({"detail": "Agent not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Verify access: staff or authorized demo user
+        is_staff = request.user.is_authenticated and request.user.is_staff
+        active_agent = get_active_agent(request)
+        if not (is_staff or (active_agent and active_agent.id == agent.id)):
+            if request.user.is_authenticated:
+                has_access = UserAgentAccess.objects.filter(user=request.user, agent=agent).exists()
+                if not has_access:
+                    return Response({"detail": "You do not have permission to view routing history for this agent."}, status=status.HTTP_403_FORBIDDEN)
+
+        history = FeedbackService.get_agent_routing_history(agent)
+        return Response({
+            "agent_id": str(agent.id),
+            "company_name": agent.company_name,
+            "history_count": len(history),
+            "history": history
+        })
+
+
+class AgentEngagementView(APIView):
+    """
+    GET /api/v1/agents/{id}/engagement/
+    Engagement metrics, response rates, and topic breakdown.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        try:
+            agent = Agent.objects.get(id=pk)
+        except Agent.DoesNotExist:
+            return Response({"detail": "Agent not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        stats = FeedbackService.get_agent_engagement_stats(agent)
+        return Response(stats)
+
+
+class PostModerateView(APIView):
+    """
+    POST /api/v1/posts/{id}/moderate/
+    Admin moderation endpoint to reject or publish posts.
+    Section 12: Posts start as pending_routing. An admin can reject a post,
+    and rejected posts are never routed or shown to candidates.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, pk):
+        # Admin check
+        is_staff = request.user.is_authenticated and request.user.is_staff
+        action = request.data.get('action')
+        reason = request.data.get('reason', 'Administrative moderation action.')
+
+        # In demo environment, allow if authenticated staff or admin action specified
+        if not (is_staff or request.data.get('admin_override')):
+            return Response(
+                {"detail": "Administrator privileges required to moderate posts."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            post = Post.objects.get(id=pk)
+        except Post.DoesNotExist:
+            return Response({"detail": "Post not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if action == 'reject':
+            post.status = 'rejected'
+            post.save(update_fields=['status'])
+            return Response({
+                "message": f"Post '{post.title}' has been rejected by moderation.",
+                "post_id": str(post.id),
+                "status": post.status,
+                "reason": reason
+            })
+        elif action == 'publish':
+            post.status = 'published'
+            post.save(update_fields=['status'])
+            # Trigger routing if not yet routed
+            if not post.routing_logs.exists():
+                RelevanceRoutingService.route_post(post)
+            return Response({
+                "message": f"Post '{post.title}' approved and published.",
+                "post_id": str(post.id),
+                "status": post.status
+            })
+        else:
+            return Response(
+                {"detail": "Invalid action. Choose 'reject' or 'publish'."},
+                status=status.HTTP_400_BAD_REQUEST
+            )

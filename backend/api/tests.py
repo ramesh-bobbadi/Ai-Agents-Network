@@ -7,7 +7,7 @@ from django.core.management import call_command
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from api.models import Agent, AgentInterest, UserAgentAccess, Post, Notification, RoutingLog, Comment
+from api.models import Agent, AgentInterest, UserAgentAccess, Post, Notification, RoutingLog, Comment, FeedbackEvent
 from api.services.embedding import EmbeddingService
 from api.services.routing import RelevanceRoutingService
 
@@ -724,3 +724,110 @@ class LLMCommentDraftTests(TestCase):
         c2 = Comment.objects.get(id=pub_res2.json()['id'])
         self.assertEqual(c2.generation_source, 'edited_draft')
         self.assertEqual(c2.llm_model, model_name)
+
+
+class Phase7TrustFeedbackAndAnalyticsTests(TestCase):
+    """
+    Phase 7 Tests:
+    - Admin moderation (reject/publish posts)
+    - FeedbackEvent recording pipeline across user interactions
+    - Engagement analytics computation
+    - Routing audit history endpoint
+    """
+    def setUp(self):
+        self.client = APIClient()
+        call_command('seed_agents')
+
+        settings.ROUTING_SIMILARITY_THRESHOLD = 0.50
+        settings.ALLOW_MOCK_LLM = True
+
+        self.admin_user = User.objects.create_superuser(username='superadmin', password='adminpassword', email='admin@test.com')
+        self.regular_user = User.objects.create_user(username='regular', password='regpassword')
+
+        self.swiggy = Agent.objects.get(company_name='Swiggy')
+        self.phonepe = Agent.objects.get(company_name='PhonePe')
+        self.bajaj = Agent.objects.get(company_name='Bajaj Auto')
+
+        # Allow regular user to act only as Bajaj
+        UserAgentAccess.objects.create(user=self.regular_user, agent=self.bajaj)
+
+        self.post = Post.objects.create(
+            author_agent=self.swiggy,
+            title="Diwali Food Delivery Discount",
+            content="5% off all deliveries above 300 rupees during Diwali week.",
+            status='pending_routing',
+        )
+        self.route_result = RelevanceRoutingService.route_post(self.post, force_mock_embeddings=True)
+
+    def test_admin_post_moderation_reject_and_publish(self):
+        mod_url = reverse('post-moderate', kwargs={'pk': self.post.id})
+
+        # 1. Non-admin user denied
+        self.client.force_authenticate(user=self.regular_user)
+        res_denied = self.client.post(mod_url, {'action': 'reject'})
+        self.assertEqual(res_denied.status_code, status.HTTP_403_FORBIDDEN)
+
+        # 2. Staff user succeeds
+        self.client.force_authenticate(user=self.admin_user)
+        res_mod = self.client.post(mod_url, {'action': 'reject', 'reason': 'Violates policy'})
+        self.assertEqual(res_mod.status_code, status.HTTP_200_OK)
+
+        self.post.refresh_from_db()
+        self.assertEqual(self.post.status, 'rejected')
+
+    def test_feedback_event_recording_pipeline(self):
+        # 1. notification_created event exists from routing
+        created_events = FeedbackEvent.objects.filter(post=self.post, event_type='notification_created')
+        self.assertGreater(created_events.count(), 0)
+
+        # 2. notification_read event
+        notif = Notification.objects.get(post=self.post, recipient_agent=self.phonepe)
+        session = self.client.session
+        session['active_agent_id'] = str(self.phonepe.id)
+        session.save()
+
+        self.client.post(reverse('notification-read', kwargs={'pk': notif.id}))
+        self.assertTrue(
+            FeedbackEvent.objects.filter(post=self.post, agent=self.phonepe, event_type='notification_read').exists()
+        )
+
+        # 3. draft_generated event
+        self.client.post(reverse('post-draft-comment', kwargs={'pk': self.post.id}))
+        self.assertTrue(
+            FeedbackEvent.objects.filter(post=self.post, agent=self.phonepe, event_type='draft_generated').exists()
+        )
+
+        # 4. comment_published event
+        self.client.post(
+            reverse('comment-create', kwargs={'pk': self.post.id}),
+            {'content': 'PhonePe payment response', 'generation_source': 'llm_draft'}
+        )
+        self.assertTrue(
+            FeedbackEvent.objects.filter(post=self.post, agent=self.phonepe, event_type='comment_published').exists()
+        )
+
+    def test_agent_engagement_analytics_endpoint(self):
+        session = self.client.session
+        session['active_agent_id'] = str(self.phonepe.id)
+        session.save()
+
+        res = self.client.get(reverse('agent-engagement', kwargs={'pk': self.phonepe.id}))
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        data = res.json()
+        self.assertIn('metrics', data)
+        self.assertIn('read_rate', data['metrics'])
+        self.assertIn('top_engaged_topics', data)
+
+    def test_agent_routing_history_endpoint(self):
+        session = self.client.session
+        session['active_agent_id'] = str(self.phonepe.id)
+        session.save()
+
+        res = self.client.get(reverse('agent-routing-history', kwargs={'pk': self.phonepe.id}))
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        data = res.json()
+        self.assertIn('history', data)
+        self.assertGreater(data['history_count'], 0)
+        first_entry = data['history'][0]
+        self.assertEqual(first_entry['post_id'], str(self.post.id))
+        self.assertIn(first_entry['decision'], ['notified', 'below_threshold', 'excluded'])
