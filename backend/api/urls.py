@@ -8,6 +8,10 @@ from .views import (
     PostListCreateView,
     PostDetailView,
     CommentCreateView,
+    NotificationListView,
+    NotificationUnreadCountView,
+    NotificationMarkReadView,
+    NotificationDismissView,
 )
 
 urlpatterns = [
@@ -24,4 +28,10 @@ urlpatterns = [
     path('posts/', PostListCreateView.as_view(), name='post-list-create'),
     path('posts/<uuid:pk>/', PostDetailView.as_view(), name='post-detail'),
     path('posts/<uuid:pk>/comments/', CommentCreateView.as_view(), name='comment-create'),
+
+    # Notifications
+    path('notifications/', NotificationListView.as_view(), name='notification-list'),
+    path('notifications/unread-count/', NotificationUnreadCountView.as_view(), name='notification-unread-count'),
+    path('notifications/<uuid:pk>/read/', NotificationMarkReadView.as_view(), name='notification-read'),
+    path('notifications/<uuid:pk>/dismiss/', NotificationDismissView.as_view(), name='notification-dismiss'),
 ]

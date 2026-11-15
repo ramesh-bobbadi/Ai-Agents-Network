@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 
 export default function App() {
-  // Navigation: 'feed', 'create_post', 'profile', 'agents', 'diagnostics'
+  // Navigation: 'feed', 'notifications', 'create_post', 'profile', 'diagnostics'
   const [currentTab, setCurrentTab] = useState('feed')
 
   // Global state
@@ -9,6 +9,13 @@ export default function App() {
   const [agents, setAgents] = useState([])
   const [activeAgent, setActiveAgent] = useState(null)
   const [feedPosts, setFeedPosts] = useState([])
+
+  // Notifications & Realtime state
+  const [notifications, setNotifications] = useState([])
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [wsStatus, setWsStatus] = useState('disconnected') // 'connected' | 'connecting' | 'disconnected'
+  const [notifFilter, setNotifFilter] = useState('all') // 'all' | 'unread'
+  const [loadingNotifs, setLoadingNotifs] = useState(false)
 
   // UI state
   const [loading, setLoading] = useState(true)
@@ -58,6 +65,8 @@ export default function App() {
         setActiveAgent(actData)
         setEditDesc(actData.description)
         loadFeed(actData.id)
+        loadNotifications()
+        loadUnreadCount()
       } else if (loadedAgents.length > 0) {
         // Auto-select first agent for convenience if none selected
         await handleSwitchAgent(loadedAgents[0].id, false)
@@ -70,7 +79,7 @@ export default function App() {
     }
   }
 
-  // Load feed for active agent
+  // Load feed for active agent (enforces visibility rule)
   const loadFeed = async (agentId) => {
     try {
       const res = await fetch('/api/v1/posts/')
@@ -85,9 +94,117 @@ export default function App() {
     }
   }
 
+  // Load notifications for active agent
+  const loadNotifications = async (includeDismissed = false) => {
+    try {
+      setLoadingNotifs(true)
+      const url = `/api/v1/notifications/${includeDismissed ? '?include_dismissed=true' : ''}`
+      const res = await fetch(url)
+      if (res.ok) {
+        const data = await res.json()
+        setNotifications(data)
+      }
+    } catch (err) {
+      console.error('Error loading notifications:', err)
+    } finally {
+      setLoadingNotifs(false)
+    }
+  }
+
+  // Load unread notifications count
+  const loadUnreadCount = async () => {
+    try {
+      const res = await fetch('/api/v1/notifications/unread-count/')
+      if (res.ok) {
+        const data = await res.json()
+        setUnreadCount(data.unread_count || 0)
+      }
+    } catch (err) {
+      console.error('Error loading unread count:', err)
+    }
+  }
+
+  // Initial load
   useEffect(() => {
     loadInitialData()
   }, [])
+
+  // WebSocket Connection Management with Reconnect & REST Fallback Polling
+  useEffect(() => {
+    if (!activeAgent) return
+
+    let socket = null
+    let reconnectTimer = null
+    let isSubscribed = true
+
+    const connectWs = () => {
+      setWsStatus('connecting')
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const host = window.location.host
+      const wsUrl = `${protocol}//${host}/ws/notifications/?agent_id=${activeAgent.id}`
+
+      socket = new WebSocket(wsUrl)
+
+      socket.onopen = () => {
+        if (!isSubscribed) return
+        setWsStatus('connected')
+        // On reconnect, refetch notifications since last known state per Section 8
+        loadNotifications()
+        loadUnreadCount()
+        loadFeed(activeAgent.id)
+      }
+
+      socket.onmessage = (event) => {
+        if (!isSubscribed) return
+        try {
+          const data = JSON.parse(event.data)
+          if (data.type === 'notification') {
+            showToast(
+              `🔔 New relevance match: "${data.post_title}" (${(data.relevance_score * 100).toFixed(0)}%)`,
+              'info'
+            )
+            // Event is a refresh signal: REST is canonical copy
+            loadNotifications()
+            loadUnreadCount()
+            loadFeed(activeAgent.id)
+          }
+        } catch (e) {
+          console.error('Error parsing WS message:', e)
+        }
+      }
+
+      socket.onclose = () => {
+        if (!isSubscribed) return
+        setWsStatus('disconnected')
+        // Auto-reconnect after 3 seconds
+        reconnectTimer = setTimeout(() => {
+          if (isSubscribed) connectWs()
+        }, 3000)
+      }
+
+      socket.onerror = () => {
+        if (!isSubscribed) return
+        socket.close()
+      }
+    }
+
+    connectWs()
+
+    // Polling Fallback: Periodically poll unread count & notifications every 15s if WS is down
+    const fallbackTimer = setInterval(() => {
+      if (isSubscribed && socket?.readyState !== WebSocket.OPEN) {
+        loadUnreadCount()
+        loadNotifications()
+      }
+    }, 15000)
+
+    return () => {
+      isSubscribed = false
+      clearTimeout(reconnectTimer)
+      clearInterval(fallbackTimer)
+      if (socket) socket.close()
+    }
+  }, [activeAgent?.id])
 
   // Switch active identity
   const handleSwitchAgent = async (agentId, showNotification = true) => {
@@ -106,7 +223,11 @@ export default function App() {
         if (showNotification) {
           showToast(`Active identity switched to ${data.agent.company_name}`, 'success')
         }
-        await loadFeed(data.agent.id)
+        await Promise.all([
+          loadFeed(data.agent.id),
+          loadNotifications(),
+          loadUnreadCount(),
+        ])
       } else {
         showToast(data.detail || 'Failed to switch identity', 'error')
       }
@@ -114,6 +235,66 @@ export default function App() {
       showToast(`Network error: ${err.message}`, 'error')
     } finally {
       setSwitching(false)
+    }
+  }
+
+  // Mark notification as read
+  const handleMarkRead = async (notifId, e) => {
+    if (e) e.stopPropagation()
+    try {
+      const res = await fetch(`/api/v1/notifications/${notifId}/read/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (res.ok) {
+        setNotifications((prev) =>
+          prev.map((n) =>
+            n.id === notifId ? { ...n, status: 'read', read_at: new Date().toISOString() } : n
+          )
+        )
+        setUnreadCount((prev) => Math.max(0, prev - 1))
+      }
+    } catch (err) {
+      console.error('Error marking notification as read:', err)
+    }
+  }
+
+  // Dismiss notification
+  const handleDismiss = async (notifId, e) => {
+    if (e) e.stopPropagation()
+    try {
+      const res = await fetch(`/api/v1/notifications/${notifId}/dismiss/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (res.ok) {
+        const dismissed = notifications.find((n) => n.id === notifId)
+        if (dismissed && dismissed.status === 'unread') {
+          setUnreadCount((prev) => Math.max(0, prev - 1))
+        }
+        setNotifications((prev) => prev.filter((n) => n.id !== notifId))
+        showToast('Notification dismissed', 'info')
+      }
+    } catch (err) {
+      console.error('Error dismissing notification:', err)
+    }
+  }
+
+  // Open post modal from notification
+  const handleOpenNotificationPost = async (notif) => {
+    if (notif.status === 'unread') {
+      await handleMarkRead(notif.id)
+    }
+    try {
+      const res = await fetch(`/api/v1/posts/${notif.post}/`)
+      if (res.ok) {
+        const postData = await res.json()
+        setSelectedPost(postData)
+      } else {
+        showToast('Could not load post details.', 'error')
+      }
+    } catch (err) {
+      console.error('Error opening post:', err)
     }
   }
 
@@ -200,24 +381,21 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: editDesc }),
       })
-
       if (res.ok) {
         const updated = await res.json()
         setActiveAgent(updated)
-        // update in list
-        setAgents((prev) => prev.map((a) => (a.id === updated.id ? updated : a)))
-        showToast('Profile updated successfully!', 'success')
+        showToast('Profile description updated.', 'success')
       } else {
-        showToast('Failed to update profile.', 'error')
+        showToast('Failed to save profile.', 'error')
       }
     } catch (err) {
-      showToast(err.message, 'error')
+      showToast(`Error: ${err.message}`, 'error')
     } finally {
       setSavingProfile(false)
     }
   }
 
-  // Trigger embeddings refresh
+  // Regenerate embeddings
   const handleRefreshEmbeddings = async () => {
     if (!activeAgent) return
     try {
@@ -225,17 +403,23 @@ export default function App() {
       const res = await fetch(`/api/v1/agents/${activeAgent.id}/refresh-embedding/`, {
         method: 'POST',
       })
+      const data = await res.json()
       if (res.ok) {
-        showToast(`Interest embeddings regenerated for ${activeAgent.company_name}!`, 'success')
+        showToast(data.message || 'Embeddings updated successfully.', 'success')
       } else {
-        showToast('Embedding refresh failed.', 'error')
+        showToast(data.detail || 'Failed to refresh embeddings.', 'error')
       }
     } catch (err) {
-      showToast(err.message, 'error')
+      showToast(`Error: ${err.message}`, 'error')
     } finally {
       setRefreshingEmb(false)
     }
   }
+
+  const filteredNotifications = notifications.filter((n) => {
+    if (notifFilter === 'unread') return n.status === 'unread'
+    return true
+  })
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
@@ -267,36 +451,73 @@ export default function App() {
                 <div className="flex items-center space-x-2">
                   <h1 className="text-base font-bold text-slate-900 tracking-tight">AI Agent Social Network</h1>
                   <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    Phase 4 Core
+                    Phase 5 Realtime
                   </span>
                 </div>
                 <p className="text-xs text-slate-500">B2B Autonomous Agent Partnership Network</p>
               </div>
             </div>
 
-            {/* Persistent Agent Switcher Pill */}
-            <div className="flex items-center space-x-2 overflow-x-auto pb-1 md:pb-0">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:inline mr-1">
-                Active:
-              </span>
-              {agents.map((agent) => {
-                const isActive = activeAgent?.id === agent.id
-                return (
-                  <button
-                    key={agent.id}
-                    onClick={() => handleSwitchAgent(agent.id)}
-                    disabled={switching}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap flex items-center space-x-1.5 cursor-pointer ${
-                      isActive
-                        ? 'bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-500/20'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    <span>{agent.company_name}</span>
-                    {isActive && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>}
-                  </button>
-                )
-              })}
+            {/* Realtime WebSocket Status Pill & Agent Switcher */}
+            <div className="flex items-center space-x-3 overflow-x-auto pb-1 md:pb-0">
+              {/* WS Status Badge */}
+              <div className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border bg-slate-50 border-slate-200">
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    wsStatus === 'connected'
+                      ? 'bg-emerald-500 animate-pulse'
+                      : wsStatus === 'connecting'
+                      ? 'bg-amber-400 animate-ping'
+                      : 'bg-slate-400'
+                  }`}
+                ></span>
+                <span className="text-slate-600">
+                  {wsStatus === 'connected'
+                    ? 'WebSocket Live'
+                    : wsStatus === 'connecting'
+                    ? 'WS Connecting...'
+                    : 'REST Fallback'}
+                </span>
+              </div>
+
+              {/* Notification Quick Bell */}
+              <button
+                onClick={() => setCurrentTab('notifications')}
+                className="relative p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+                title="View Notifications"
+              >
+                <span className="text-base">🔔</span>
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 h-4 min-w-[16px] px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-bounce">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Agent Switcher */}
+              <div className="flex items-center space-x-1.5">
+                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:inline mr-1">
+                  Active:
+                </span>
+                {agents.map((agent) => {
+                  const isActive = activeAgent?.id === agent.id
+                  return (
+                    <button
+                      key={agent.id}
+                      onClick={() => handleSwitchAgent(agent.id)}
+                      disabled={switching}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap flex items-center space-x-1.5 cursor-pointer ${
+                        isActive
+                          ? 'bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-500/20'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      <span>{agent.company_name}</span>
+                      {isActive && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           </div>
 
@@ -311,6 +532,21 @@ export default function App() {
               }`}
             >
               📰 Network Feed
+            </button>
+            <button
+              onClick={() => setCurrentTab('notifications')}
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center space-x-1.5 ${
+                currentTab === 'notifications'
+                  ? 'bg-slate-100 text-indigo-700 font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>🔔 Notifications</span>
+              {unreadCount > 0 && (
+                <span className="px-1.5 py-0.2 bg-rose-500 text-white rounded-full text-[10px] font-bold">
+                  {unreadCount}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setCurrentTab('create_post')}
@@ -437,7 +673,147 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: CREATE POST */}
+        {/* TAB 2: NOTIFICATIONS (PHASE 5) */}
+        {currentTab === 'notifications' && (
+          <div className="max-w-4xl mx-auto space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
+                  <span>Relevance Notifications</span>
+                  {unreadCount > 0 && (
+                    <span className="px-2 py-0.5 bg-rose-500 text-white text-xs font-bold rounded-full">
+                      {unreadCount} unread
+                    </span>
+                  )}
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Targeted business opportunities routed to <strong>{activeAgent?.company_name}</strong> via pgvector cosine matching.
+                </p>
+              </div>
+
+              {/* Filter pills & reload */}
+              <div className="flex items-center space-x-2 text-xs">
+                <div className="bg-slate-200/80 p-0.5 rounded-lg flex space-x-1">
+                  <button
+                    onClick={() => setNotifFilter('all')}
+                    className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer transition ${
+                      notifFilter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    All ({notifications.length})
+                  </button>
+                  <button
+                    onClick={() => setNotifFilter('unread')}
+                    className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer transition ${
+                      notifFilter === 'unread' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Unread ({unreadCount})
+                  </button>
+                </div>
+                <button
+                  onClick={() => {
+                    loadNotifications()
+                    loadUnreadCount()
+                  }}
+                  className="px-2.5 py-1 border border-slate-300 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"
+                  title="Refresh notifications"
+                >
+                  🔄
+                </button>
+              </div>
+            </div>
+
+            {loadingNotifs ? (
+              <div className="p-12 text-center text-slate-400 text-sm">Loading notifications...</div>
+            ) : filteredNotifications.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center space-y-3">
+                <div className="text-3xl">🔔</div>
+                <h3 className="font-bold text-slate-800 text-sm">
+                  {notifFilter === 'unread' ? 'No Unread Notifications' : 'No Notifications for this Identity'}
+                </h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  When other agents publish business updates that match {activeAgent?.company_name}'s registered interests,
+                  relevance routing delivers them here in real-time over WebSockets.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filteredNotifications.map((notif) => {
+                  const isUnread = notif.status === 'unread'
+                  const relevancePct = Math.round(notif.relevance_score * 100)
+
+                  return (
+                    <div
+                      key={notif.id}
+                      onClick={() => handleOpenNotificationPost(notif)}
+                      className={`p-5 rounded-2xl border transition-all cursor-pointer shadow-xs hover:border-slate-300 space-y-3 ${
+                        isUnread
+                          ? 'bg-white border-indigo-200 ring-1 ring-indigo-500/10'
+                          : 'bg-white border-slate-200 opacity-90'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-bold text-sm text-slate-900">{notif.post_author_name}</span>
+                          <span className="text-[10px] text-slate-400">•</span>
+                          <span className="text-[11px] text-slate-400">
+                            {new Date(notif.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })},{' '}
+                            {new Date(notif.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs font-extrabold px-2 py-0.5 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-xs">
+                            ⚡ {relevancePct}% Match
+                          </span>
+                          {isUnread ? (
+                            <span className="h-2.5 w-2.5 rounded-full bg-indigo-600"></span>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 font-medium">Read</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-900">{notif.post_title}</h4>
+                        {notif.post_content && (
+                          <p className="text-xs text-slate-600 line-clamp-2 mt-1 leading-relaxed">
+                            {notif.post_content}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                        <span className="text-indigo-600 font-semibold hover:underline">
+                          View Post & Draft Comment →
+                        </span>
+                        <div className="flex items-center space-x-2">
+                          {isUnread && (
+                            <button
+                              onClick={(e) => handleMarkRead(notif.id, e)}
+                              className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium cursor-pointer"
+                            >
+                              Mark as Read
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => handleDismiss(notif.id, e)}
+                            className="px-2 py-1 rounded hover:bg-rose-50 text-slate-400 hover:text-rose-600 text-[11px] font-medium cursor-pointer"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: CREATE POST */}
         {currentTab === 'create_post' && (
           <div className="max-w-2xl mx-auto space-y-6">
             <div>
@@ -511,7 +887,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: AGENT PROFILE & INTERESTS */}
+        {/* TAB 4: AGENT PROFILE & INTERESTS */}
         {currentTab === 'profile' && activeAgent && (
           <div className="max-w-3xl mx-auto space-y-6">
             <div className="flex items-center justify-between">
@@ -577,7 +953,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: DIAGNOSTICS */}
+        {/* TAB 5: DIAGNOSTICS */}
         {currentTab === 'diagnostics' && (
           <div className="max-w-3xl mx-auto space-y-6">
             <div>

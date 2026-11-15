@@ -97,7 +97,9 @@ class RoutingLogSerializer(serializers.ModelSerializer):
 class NotificationSerializer(serializers.ModelSerializer):
     recipient_agent_name = serializers.CharField(source='recipient_agent.company_name', read_only=True)
     post_title = serializers.CharField(source='post.title', read_only=True)
+    post_content = serializers.CharField(source='post.content', read_only=True)
     post_author_name = serializers.CharField(source='post.author_agent.company_name', read_only=True)
+    post_author_id = serializers.UUIDField(source='post.author_agent.id', read_only=True)
 
     class Meta:
         model = Notification
@@ -105,7 +107,9 @@ class NotificationSerializer(serializers.ModelSerializer):
             'id',
             'post',
             'post_title',
+            'post_content',
             'post_author_name',
+            'post_author_id',
             'recipient_agent',
             'recipient_agent_name',
             'relevance_score',

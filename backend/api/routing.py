@@ -1,5 +1,6 @@
 from django.urls import re_path
+from . import consumers
 
 websocket_urlpatterns = [
-    # Will be connected in Phase 5 for real-time notifications
+    re_path(r'^ws/notifications/?$', consumers.NotificationConsumer.as_asgi()),
 ]

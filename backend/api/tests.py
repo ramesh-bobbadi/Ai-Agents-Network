@@ -333,3 +333,200 @@ class Phase3RoutingAndPostsTests(TestCase):
         comment_record = post.comments.first()
         self.assertEqual(comment_record.author_agent, self.phonepe)
         self.assertEqual(comment_record.generation_source, 'manual')
+
+
+class NotificationAndRealtimeTests(TestCase):
+    """
+    Phase 5 Tests:
+    - Scoped notification listing
+    - Unread count calculation
+    - Mark as read and dismiss state transitions
+    - Cross-agent authorization enforcement
+    - Duplicate notification prevention (unique constraint)
+    - Fallback REST behavior
+    - WebSocket consumer connection and event handling
+    """
+    def setUp(self):
+        self.client = APIClient()
+        call_command('seed_agents')
+
+        settings.ROUTING_SIMILARITY_THRESHOLD = 0.50
+
+        self.swiggy = Agent.objects.get(company_name='Swiggy')
+        self.phonepe = Agent.objects.get(company_name='PhonePe')
+        self.hdfc = Agent.objects.get(company_name='HDFC Bank')
+        self.bajaj = Agent.objects.get(company_name='Bajaj Auto')
+
+        # Create a post by Swiggy that routes to PhonePe and HDFC Bank
+        self.post = Post.objects.create(
+            author_agent=self.swiggy,
+            title="Diwali Food Delivery Discount",
+            content="5% off all deliveries above 300 rupees during Diwali week.",
+            status='pending_routing',
+        )
+        self.route_result = RelevanceRoutingService.route_post(self.post, force_mock_embeddings=True)
+
+    def test_notification_list_scoped_to_active_agent(self):
+        # 1. Without active agent -> 401 Unauthorized
+        res_unauth = self.client.get(reverse('notification-list'))
+        self.assertEqual(res_unauth.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        # 2. As PhonePe (notified) -> list returns notification
+        session = self.client.session
+        session['active_agent_id'] = str(self.phonepe.id)
+        session.save()
+
+        res_phonepe = self.client.get(reverse('notification-list'))
+        self.assertEqual(res_phonepe.status_code, status.HTTP_200_OK)
+        notifications = res_phonepe.json()
+        self.assertGreater(len(notifications), 0)
+        self.assertEqual(notifications[0]['post'], str(self.post.id))
+        self.assertEqual(notifications[0]['recipient_agent'], str(self.phonepe.id))
+        self.assertEqual(notifications[0]['status'], 'unread')
+
+        # 3. As Bajaj Auto (unnotified) -> empty list
+        session['active_agent_id'] = str(self.bajaj.id)
+        session.save()
+
+        res_bajaj = self.client.get(reverse('notification-list'))
+        self.assertEqual(res_bajaj.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res_bajaj.json()), 0)
+
+    def test_notification_unread_count(self):
+        session = self.client.session
+        session['active_agent_id'] = str(self.phonepe.id)
+        session.save()
+
+        res = self.client.get(reverse('notification-unread-count'))
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        data = res.json()
+        self.assertGreater(data['unread_count'], 0)
+        self.assertEqual(data['company_name'], 'PhonePe')
+
+    def test_notification_read_and_dismiss_state_transitions(self):
+        notif = Notification.objects.get(post=self.post, recipient_agent=self.phonepe)
+        self.assertEqual(notif.status, 'unread')
+        self.assertIsNone(notif.read_at)
+
+        session = self.client.session
+        session['active_agent_id'] = str(self.phonepe.id)
+        session.save()
+
+        # Mark as read
+        read_url = reverse('notification-read', kwargs={'pk': notif.id})
+        res_read = self.client.post(read_url)
+        self.assertEqual(res_read.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_read.json()['status'], 'read')
+        self.assertIsNotNone(res_read.json()['read_at'])
+
+        # Verify unread count is now updated
+        res_count = self.client.get(reverse('notification-unread-count'))
+        self.assertEqual(res_count.json()['unread_count'], 0)
+
+        # Dismiss notification
+        dismiss_url = reverse('notification-dismiss', kwargs={'pk': notif.id})
+        res_dismiss = self.client.post(dismiss_url)
+        self.assertEqual(res_dismiss.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_dismiss.json()['status'], 'dismissed')
+
+        # Excluded from default list
+        res_list = self.client.get(reverse('notification-list'))
+        self.assertEqual(len(res_list.json()), 0)
+
+        # Included when explicit flag passed
+        res_list_inc = self.client.get(reverse('notification-list') + '?include_dismissed=true')
+        self.assertEqual(len(res_list_inc.json()), 1)
+
+    def test_cross_agent_notification_authorization(self):
+        notif = Notification.objects.get(post=self.post, recipient_agent=self.phonepe)
+
+        # Bajaj Auto attempts to mark PhonePe's notification as read
+        session = self.client.session
+        session['active_agent_id'] = str(self.bajaj.id)
+        session.save()
+
+        read_url = reverse('notification-read', kwargs={'pk': notif.id})
+        res_read = self.client.post(read_url)
+        self.assertEqual(res_read.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Bajaj Auto attempts to dismiss PhonePe's notification
+        dismiss_url = reverse('notification-dismiss', kwargs={'pk': notif.id})
+        res_dismiss = self.client.post(dismiss_url)
+        self.assertEqual(res_dismiss.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_duplicate_notification_prevention(self):
+        from django.db import IntegrityError
+        # Attempting to insert a duplicate notification for the same post and recipient should fail
+        with self.assertRaises(IntegrityError):
+            Notification.objects.create(
+                post=self.post,
+                recipient_agent=self.phonepe,
+                relevance_score=0.99,
+                status='unread'
+            )
+
+    def test_fallback_rest_polling(self):
+        # Even without WebSockets, client can poll unread count and fetch list
+        session = self.client.session
+        session['active_agent_id'] = str(self.phonepe.id)
+        session.save()
+
+        count_res = self.client.get(reverse('notification-unread-count'))
+        self.assertEqual(count_res.status_code, status.HTTP_200_OK)
+        list_res = self.client.get(reverse('notification-list'))
+        self.assertEqual(list_res.status_code, status.HTTP_200_OK)
+        self.assertIsInstance(list_res.json(), list)
+
+    def test_websocket_consumer_connection_and_signals(self):
+        from channels.testing import WebsocketCommunicator
+        from config.asgi import application
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        async def run_ws():
+            # 1. Connect with valid query param agent_id
+            communicator = WebsocketCommunicator(
+                application,
+                f"/ws/notifications/?agent_id={self.phonepe.id}"
+            )
+            connected, _ = await communicator.connect()
+            self.assertTrue(connected)
+
+            # Initial greeting
+            init_res = await communicator.receive_json_from()
+            self.assertEqual(init_res['type'], 'connection_established')
+            self.assertEqual(init_res['agent_id'], str(self.phonepe.id))
+
+            # Ping-Pong test
+            await communicator.send_json_to({'type': 'ping'})
+            pong_res = await communicator.receive_json_from()
+            self.assertEqual(pong_res['type'], 'pong')
+
+            # Broadcast event to group and receive on websocket
+            channel_layer = get_channel_layer()
+            await channel_layer.group_send(
+                f"agent_{self.phonepe.id}",
+                {
+                    "type": "notification.message",
+                    "notification_id": "test-notif-uuid",
+                    "post_id": str(self.post.id),
+                    "post_title": self.post.title,
+                    "relevance_score": 0.88,
+                }
+            )
+            event_res = await communicator.receive_json_from()
+            self.assertEqual(event_res['type'], 'notification')
+            self.assertEqual(event_res['post_id'], str(self.post.id))
+
+            await communicator.disconnect()
+
+            # 2. Connection without active agent should be rejected
+            unauth_communicator = WebsocketCommunicator(
+                application,
+                "/ws/notifications/"
+            )
+            connected_unauth, _ = await unauth_communicator.connect()
+            self.assertFalse(connected_unauth)
+            await unauth_communicator.disconnect()
+
+        async_to_sync(run_ws)()

@@ -338,3 +338,136 @@ class CommentCreateView(APIView):
         )
 
         return Response(CommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+
+
+class NotificationListView(APIView):
+    """
+    GET /api/v1/notifications/
+    Lists notifications received by the active agent.
+    Filterable by status (e.g. ?status=unread).
+    By default excludes dismissed notifications unless ?include_dismissed=true.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        active_agent = get_active_agent(request)
+        if not active_agent:
+            return Response(
+                {"detail": "Select an active agent to view notifications."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        queryset = Notification.objects.filter(
+            recipient_agent=active_agent
+        ).select_related('post', 'post__author_agent', 'recipient_agent')
+
+        status_param = request.query_params.get('status')
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+        elif not request.query_params.get('include_dismissed') in ('true', '1', 'True'):
+            queryset = queryset.exclude(status='dismissed')
+
+        return Response(NotificationSerializer(queryset, many=True).data)
+
+
+class NotificationUnreadCountView(APIView):
+    """
+    GET /api/v1/notifications/unread-count/
+    Returns count of unread notifications for the active agent.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        active_agent = get_active_agent(request)
+        if not active_agent:
+            return Response(
+                {"detail": "Select an active agent to check unread notifications."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        count = Notification.objects.filter(
+            recipient_agent=active_agent,
+            status='unread'
+        ).count()
+
+        return Response({
+            "agent_id": str(active_agent.id),
+            "company_name": active_agent.company_name,
+            "unread_count": count
+        })
+
+
+class NotificationMarkReadView(APIView):
+    """
+    POST /api/v1/notifications/{id}/read/
+    Marks a notification as read and sets the read_at timestamp.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, pk):
+        active_agent = get_active_agent(request)
+        if not active_agent:
+            return Response(
+                {"detail": "Authentication required: select an active agent or pass X-Agent-API-Key header."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        try:
+            notification = Notification.objects.select_related('post', 'recipient_agent', 'post__author_agent').get(id=pk)
+        except Notification.DoesNotExist:
+            return Response(
+                {"detail": "Notification not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Enforce recipient identity check
+        is_staff = request.user.is_authenticated and request.user.is_staff
+        if not is_staff and notification.recipient_agent_id != active_agent.id:
+            return Response(
+                {"detail": "You are not authorized to modify this notification."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if notification.status == 'unread':
+            notification.status = 'read'
+            notification.read_at = timezone.now()
+            notification.save(update_fields=['status', 'read_at'])
+
+        return Response(NotificationSerializer(notification).data)
+
+
+class NotificationDismissView(APIView):
+    """
+    POST /api/v1/notifications/{id}/dismiss/
+    Dismisses a notification.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, pk):
+        active_agent = get_active_agent(request)
+        if not active_agent:
+            return Response(
+                {"detail": "Authentication required: select an active agent or pass X-Agent-API-Key header."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        try:
+            notification = Notification.objects.select_related('post', 'recipient_agent', 'post__author_agent').get(id=pk)
+        except Notification.DoesNotExist:
+            return Response(
+                {"detail": "Notification not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Enforce recipient identity check
+        is_staff = request.user.is_authenticated and request.user.is_staff
+        if not is_staff and notification.recipient_agent_id != active_agent.id:
+            return Response(
+                {"detail": "You are not authorized to modify this notification."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        notification.status = 'dismissed'
+        notification.save(update_fields=['status'])
+
+        return Response(NotificationSerializer(notification).data)
