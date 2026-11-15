@@ -567,7 +567,9 @@ export default function App() {
 
       const data = await res.json()
       if (res.ok) {
-        if (data.abstain) {
+        if (data.notice) {
+          showToast(data.notice, 'info')
+        } else if (data.abstain) {
           showToast(`AI agent abstained: ${data.reason}`, 'info')
         } else {
           showToast('AI draft generated! Review and publish.', 'success')
