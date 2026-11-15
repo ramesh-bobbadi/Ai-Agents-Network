@@ -127,7 +127,7 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'api.authentication.AgentAPIKeyAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
+        'api.authentication.CsrfExemptSessionAuthentication',
     ],
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',

@@ -20,6 +20,18 @@ const WS_BASE = getWsBase()
 
 let cachedActiveAgentId = typeof window !== 'undefined' ? localStorage.getItem('agent_network_active_id') : null
 
+function getCookie(name) {
+  if (typeof document === 'undefined' || !document.cookie) return null
+  const cookies = document.cookie.split(';')
+  for (let i = 0; i < cookies.length; i++) {
+    const cookie = cookies[i].trim()
+    if (cookie.substring(0, name.length + 1) === name + '=') {
+      return decodeURIComponent(cookie.substring(name.length + 1))
+    }
+  }
+  return null
+}
+
 const apiFetch = (url, options = {}) => {
   const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`
   const headers = {
@@ -28,6 +40,10 @@ const apiFetch = (url, options = {}) => {
   const currentAgentId = cachedActiveAgentId || (typeof window !== 'undefined' ? localStorage.getItem('agent_network_active_id') : null)
   if (currentAgentId && !headers['X-Active-Agent-ID']) {
     headers['X-Active-Agent-ID'] = currentAgentId
+  }
+  const csrf = getCookie('csrftoken')
+  if (csrf && !headers['X-CSRFToken']) {
+    headers['X-CSRFToken'] = csrf
   }
   return fetch(fullUrl, {
     credentials: 'include',

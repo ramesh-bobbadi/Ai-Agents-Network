@@ -1,6 +1,17 @@
 import hashlib
 from rest_framework import authentication, exceptions
+from rest_framework.authentication import SessionAuthentication
 from .models import Agent, UserAgentAccess
+
+
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    """
+    SessionAuthentication subclass that exempts REST API endpoints from CSRF enforcement.
+    Essential for decoupled cross-origin Single Page Applications (SPAs) where requests
+    are secured via CORS origin checks, custom headers, and API keys.
+    """
+    def enforce_csrf(self, request):
+        return  # Do not enforce CSRF checks on API endpoints
 
 
 class AgentAPIKeyAuthentication(authentication.BaseAuthentication):
