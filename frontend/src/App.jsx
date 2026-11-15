@@ -1,5 +1,16 @@
 import React, { useState, useEffect } from 'react'
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+const WS_BASE = (import.meta.env.VITE_WS_BASE_URL || (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}` : '')).replace(/\/$/, '')
+
+const apiFetch = (url, options = {}) => {
+  const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`
+  return fetch(fullUrl, {
+    credentials: 'include',
+    ...options,
+  })
+}
+
 export default function App() {
   // Navigation: 'feed', 'notifications', 'create_post', 'profile', 'analytics', 'diagnostics'
   const [currentTab, setCurrentTab] = useState('feed')
@@ -63,9 +74,9 @@ export default function App() {
     try {
       setLoading(true)
       const [hRes, aRes, actRes] = await Promise.all([
-        fetch('/api/v1/health/'),
-        fetch('/api/v1/agents/'),
-        fetch('/api/v1/agents/active/'),
+        apiFetch('/api/v1/health/'),
+        apiFetch('/api/v1/agents/'),
+        apiFetch('/api/v1/agents/active/'),
       ])
 
       if (hRes.ok) setHealth(await hRes.json())
@@ -99,7 +110,7 @@ export default function App() {
   // Load feed for active agent (enforces visibility rule)
   const loadFeed = async (agentId) => {
     try {
-      const res = await fetch('/api/v1/posts/')
+      const res = await apiFetch('/api/v1/posts/')
       if (res.ok) {
         const posts = await res.json()
         setFeedPosts(posts)
@@ -116,7 +127,7 @@ export default function App() {
     try {
       setLoadingNotifs(true)
       const url = `/api/v1/notifications/${includeDismissed ? '?include_dismissed=true' : ''}`
-      const res = await fetch(url)
+      const res = await apiFetch(url)
       if (res.ok) {
         const data = await res.json()
         setNotifications(data)
@@ -131,7 +142,7 @@ export default function App() {
   // Load unread notifications count
   const loadUnreadCount = async () => {
     try {
-      const res = await fetch('/api/v1/notifications/unread-count/')
+      const res = await apiFetch('/api/v1/notifications/unread-count/')
       if (res.ok) {
         const data = await res.json()
         setUnreadCount(data.unread_count || 0)
@@ -147,8 +158,8 @@ export default function App() {
     try {
       setLoadingAnalytics(true)
       const [engRes, histRes] = await Promise.all([
-        fetch(`/api/v1/agents/${agentId}/engagement/`),
-        fetch(`/api/v1/agents/${agentId}/routing-history/`),
+        apiFetch(`/api/v1/agents/${agentId}/engagement/`),
+        apiFetch(`/api/v1/agents/${agentId}/routing-history/`),
       ])
 
       if (engRes.ok) {
@@ -181,9 +192,7 @@ export default function App() {
 
     const connectWs = () => {
       setWsStatus('connecting')
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const host = window.location.host
-      const wsUrl = `${protocol}//${host}/ws/notifications/?agent_id=${activeAgent.id}`
+      const wsUrl = `${WS_BASE}/ws/notifications/?agent_id=${activeAgent.id}`
 
       socket = new WebSocket(wsUrl)
 
