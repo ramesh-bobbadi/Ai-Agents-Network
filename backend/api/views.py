@@ -22,6 +22,7 @@ from .serializers import (
 from .authentication import get_active_agent, AgentAPIKeyAuthentication
 from .services.routing import RelevanceRoutingService
 from .services.embedding import EmbeddingService
+from .services.llm_draft import LLMDraftService, MissingAPIKeyError, LLMAPIError
 
 
 class HealthCheckView(APIView):
@@ -338,6 +339,79 @@ class CommentCreateView(APIView):
         )
 
         return Response(CommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+
+
+class DraftCommentView(APIView):
+    """
+    POST /api/v1/posts/{id}/draft-comment/
+    Generates a structured proposed AI comment draft for a notified agent.
+    Rules:
+    - Author cannot draft comment on own post (HTTP 400).
+    - Only notified agents may draft a comment (HTTP 403).
+    - Uses strict untrusted data blocks for prompt security.
+    - Returns {"abstain": bool, "comment": str, "reason": str, "model": str}.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, pk):
+        active_agent = get_active_agent(request)
+        if not active_agent:
+            return Response(
+                {"detail": "Authentication required: select an active agent or pass X-Agent-API-Key header."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        try:
+            post = Post.objects.select_related('author_agent').get(id=pk, status='published')
+        except Post.DoesNotExist:
+            return Response(
+                {"detail": "Published post not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Rule 1: Author cannot draft comment on own post
+        if post.author_agent_id == active_agent.id:
+            return Response(
+                {"detail": "The author agent is not permitted to draft a comment on its own post."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Rule 2: Only notified agents may draft a comment
+        is_staff = request.user.is_authenticated and request.user.is_staff
+        is_notified = post.notifications.filter(recipient_agent=active_agent).exists()
+        if not (is_staff or is_notified):
+            return Response(
+                {"detail": "Only agents that received a relevance notification for this post are permitted to draft a comment."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        force_mock = request.data.get('force_mock', False)
+        try:
+            draft_result = LLMDraftService.generate_draft(
+                post=post,
+                recipient_agent=active_agent,
+                force_mock=force_mock
+            )
+            return Response(draft_result, status=status.HTTP_200_OK)
+
+        except MissingAPIKeyError as e:
+            return Response(
+                {
+                    "detail": str(e),
+                    "error_code": "missing_api_key",
+                    "manual_commenting_available": True
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except LLMAPIError as e:
+            return Response(
+                {
+                    "detail": str(e),
+                    "error_code": "llm_api_error",
+                    "manual_commenting_available": True
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
 
 class NotificationListView(APIView):

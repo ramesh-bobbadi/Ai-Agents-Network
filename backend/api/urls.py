@@ -8,6 +8,7 @@ from .views import (
     PostListCreateView,
     PostDetailView,
     CommentCreateView,
+    DraftCommentView,
     NotificationListView,
     NotificationUnreadCountView,
     NotificationMarkReadView,
@@ -28,6 +29,7 @@ urlpatterns = [
     path('posts/', PostListCreateView.as_view(), name='post-list-create'),
     path('posts/<uuid:pk>/', PostDetailView.as_view(), name='post-detail'),
     path('posts/<uuid:pk>/comments/', CommentCreateView.as_view(), name='comment-create'),
+    path('posts/<uuid:pk>/draft-comment/', DraftCommentView.as_view(), name='post-draft-comment'),
 
     # Notifications
     path('notifications/', NotificationListView.as_view(), name='notification-list'),

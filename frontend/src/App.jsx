@@ -17,6 +17,16 @@ export default function App() {
   const [notifFilter, setNotifFilter] = useState('all') // 'all' | 'unread'
   const [loadingNotifs, setLoadingNotifs] = useState(false)
 
+  // LLM Draft state
+  const [draftState, setDraftState] = useState({
+    loading: false,
+    data: null,
+    error: null,
+    editedComment: '',
+    isEdited: false,
+  })
+  const [publishingDraft, setPublishingDraft] = useState(false)
+
   // UI state
   const [loading, setLoading] = useState(true)
   const [switching, setSwitching] = useState(false)
@@ -210,6 +220,7 @@ export default function App() {
   const handleSwitchAgent = async (agentId, showNotification = true) => {
     try {
       setSwitching(true)
+      handleDiscardDraft()
       const res = await fetch('/api/v1/agents/active/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -286,6 +297,7 @@ export default function App() {
       await handleMarkRead(notif.id)
     }
     try {
+      handleDiscardDraft()
       const res = await fetch(`/api/v1/posts/${notif.post}/`)
       if (res.ok) {
         const postData = await res.json()
@@ -324,7 +336,10 @@ export default function App() {
         setPostContent('')
         setCurrentTab('feed')
         await loadFeed(activeAgent.id)
-        if (data.post) setSelectedPost(data.post)
+        if (data.post) {
+          handleDiscardDraft()
+          setSelectedPost(data.post)
+        }
       } else {
         showToast(data.detail || 'Failed to publish post.', 'error')
       }
@@ -369,6 +384,104 @@ export default function App() {
     } finally {
       setSubmittingComment(false)
     }
+  }
+
+  // Generate LLM Comment Draft (Phase 6)
+  const handleGenerateDraft = async (postId) => {
+    try {
+      setDraftState({ loading: true, data: null, error: null, editedComment: '', isEdited: false })
+      const res = await fetch(`/api/v1/posts/${postId}/draft-comment/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+
+      const data = await res.json()
+      if (res.ok) {
+        if (data.abstain) {
+          showToast(`AI agent abstained: ${data.reason}`, 'info')
+        } else {
+          showToast('AI draft generated! Review and publish.', 'success')
+        }
+        setDraftState({
+          loading: false,
+          data: data,
+          error: null,
+          editedComment: data.comment || '',
+          isEdited: false,
+        })
+      } else {
+        const errorMsg = data.detail || 'Failed to generate AI draft.'
+        showToast(errorMsg, 'error')
+        setDraftState({
+          loading: false,
+          data: null,
+          error: errorMsg,
+          editedComment: '',
+          isEdited: false,
+        })
+      }
+    } catch (err) {
+      showToast(`Error: ${err.message}`, 'error')
+      setDraftState({
+        loading: false,
+        data: null,
+        error: err.message,
+        editedComment: '',
+        isEdited: false,
+      })
+    }
+  }
+
+  // Publish LLM Comment Draft explicitly (Phase 6)
+  const handlePublishDraft = async (postId) => {
+    if (!draftState.editedComment.trim()) return
+
+    try {
+      setPublishingDraft(true)
+      const generationSource = draftState.isEdited ? 'edited_draft' : 'llm_draft'
+      const res = await fetch(`/api/v1/posts/${postId}/comments/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: draftState.editedComment.trim(),
+          generation_source: generationSource,
+          llm_model: draftState.data?.model || 'gpt-4o-mini',
+        }),
+      })
+
+      const data = await res.json()
+      if (res.ok) {
+        showToast(
+          `AI response published as ${generationSource === 'edited_draft' ? 'Edited Draft' : 'LLM Draft'}!`,
+          'success'
+        )
+        handleDiscardDraft()
+        // Refresh post detail
+        const updatedPostRes = await fetch(`/api/v1/posts/${postId}/`)
+        if (updatedPostRes.ok) {
+          const updatedPost = await updatedPostRes.json()
+          setSelectedPost(updatedPost)
+        }
+        await loadFeed(activeAgent.id)
+      } else {
+        showToast(data.detail || 'Failed to publish AI comment.', 'error')
+      }
+    } catch (err) {
+      showToast(`Error: ${err.message}`, 'error')
+    } finally {
+      setPublishingDraft(false)
+    }
+  }
+
+  const handleDiscardDraft = () => {
+    setDraftState({
+      loading: false,
+      data: null,
+      error: null,
+      editedComment: '',
+      isEdited: false,
+    })
   }
 
   // Update profile
@@ -421,6 +534,14 @@ export default function App() {
     return true
   })
 
+  // Identity checks for selected post
+  const isPostAuthor = selectedPost?.author_agent?.id === activeAgent?.id
+  const isNotifiedForPost = selectedPost?.routing_logs?.some(
+    (l) => (l.target_agent === activeAgent?.id || l.target_agent_name === activeAgent?.company_name) && l.decision === 'notified'
+  ) || selectedPost?.notifications?.some(
+    (n) => n.recipient_agent === activeAgent?.id || n.recipient_agent_name === activeAgent?.company_name
+  )
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
       {/* Toast Notification */}
@@ -450,8 +571,8 @@ export default function App() {
               <div>
                 <div className="flex items-center space-x-2">
                   <h1 className="text-base font-bold text-slate-900 tracking-tight">AI Agent Social Network</h1>
-                  <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    Phase 5 Realtime
+                  <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    Phase 6 AI Drafts
                   </span>
                 </div>
                 <p className="text-xs text-slate-500">B2B Autonomous Agent Partnership Network</p>
@@ -621,7 +742,10 @@ export default function App() {
                     <article
                       key={post.id}
                       className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs hover:border-slate-300 transition-all space-y-3 cursor-pointer"
-                      onClick={() => setSelectedPost(post)}
+                      onClick={() => {
+                        handleDiscardDraft()
+                        setSelectedPost(post)
+                      }}
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex items-center space-x-3">
@@ -1016,7 +1140,10 @@ export default function App() {
                   </p>
                 </div>
                 <button
-                  onClick={() => setSelectedPost(null)}
+                  onClick={() => {
+                    handleDiscardDraft()
+                    setSelectedPost(null)
+                  }}
                   className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer"
                 >
                   ✕
@@ -1066,7 +1193,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Comments Thread */}
+              {/* Comments Thread & Provenance */}
               <div className="space-y-3 pt-2 border-t border-slate-100">
                 <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                   Comments & Agent Responses ({selectedPost.comments?.length || 0})
@@ -1079,7 +1206,24 @@ export default function App() {
                     {selectedPost.comments?.map((comment) => (
                       <div key={comment.id} className="p-3 rounded-xl border border-slate-200 bg-slate-50/60 space-y-1">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-slate-800">{comment.author_agent_name}</span>
+                          <div className="flex items-center space-x-2">
+                            <span className="font-bold text-slate-800">{comment.author_agent_name}</span>
+                            {comment.generation_source === 'llm_draft' && (
+                              <span className="text-[10px] bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.2 rounded font-medium">
+                                🤖 AI Draft
+                              </span>
+                            )}
+                            {comment.generation_source === 'edited_draft' && (
+                              <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.2 rounded font-medium">
+                                ✏️ Edited AI Draft
+                              </span>
+                            )}
+                            {comment.generation_source === 'manual' && (
+                              <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-medium">
+                                Manual
+                              </span>
+                            )}
+                          </div>
                           <span className="text-[10px] text-slate-400">
                             {new Date(comment.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
@@ -1090,27 +1234,138 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Comment Box (Restricted by rules) */}
-                {selectedPost.author_agent?.id === activeAgent?.id ? (
+                {/* Respond Flow (Section 10 & 11) */}
+                {isPostAuthor ? (
                   <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
                     ℹ️ You are the author ({activeAgent.company_name}) and cannot comment on your own post.
                   </div>
+                ) : !isNotifiedForPost ? (
+                  <div className="p-2.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 text-xs">
+                    🔒 <strong>Feed Visibility Rule</strong>: Only agents that received a relevance notification for this post are permitted to draft or comment.
+                  </div>
                 ) : (
-                  <div className="pt-2 flex gap-2">
-                    <input
-                      type="text"
-                      value={commentText}
-                      onChange={(e) => setCommentText(e.target.value)}
-                      placeholder={`Comment as ${activeAgent?.company_name}...`}
-                      className="flex-1 px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <button
-                      onClick={() => handleAddComment(selectedPost.id)}
-                      disabled={submittingComment || !commentText.trim()}
-                      className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 transition cursor-pointer shadow-xs"
-                    >
-                      {submittingComment ? 'Posting...' : 'Comment'}
-                    </button>
+                  <div className="space-y-4 pt-2">
+                    {/* 1. LLM DRAFT ASSISTANT PANEL */}
+                    <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/40 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-xs font-bold text-indigo-950 flex items-center space-x-1.5">
+                            <span>✨ Autonomous AI Comment Assistant</span>
+                          </span>
+                          <p className="text-[11px] text-indigo-800/80">
+                            Evaluates business synergy for <strong>{activeAgent.company_name}</strong> and prepares a proposed draft.
+                          </p>
+                        </div>
+
+                        {!draftState.data && !draftState.loading && (
+                          <button
+                            onClick={() => handleGenerateDraft(selectedPost.id)}
+                            className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 transition cursor-pointer shadow-xs flex items-center space-x-1"
+                          >
+                            <span>✨ Generate AI Draft</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Loading State */}
+                      {draftState.loading && (
+                        <div className="p-3 bg-white rounded-lg border border-indigo-100 flex items-center space-x-2 text-xs text-indigo-700">
+                          <span className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-indigo-600 border-t-transparent"></span>
+                          <span>Constructing secure prompt & evaluating synergy...</span>
+                        </div>
+                      )}
+
+                      {/* Abstention Banner */}
+                      {draftState.data?.abstain && (
+                        <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-900 space-y-1">
+                          <span className="font-bold block">⚠️ AI Agent Abstained:</span>
+                          <p className="text-amber-800">{draftState.data.reason}</p>
+                          <button
+                            onClick={handleDiscardDraft}
+                            className="text-[11px] text-amber-900 font-semibold underline cursor-pointer pt-1"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Proposed Draft Box */}
+                      {draftState.data && !draftState.data.abstain && (
+                        <div className="space-y-2 bg-white p-3 rounded-xl border border-indigo-200 shadow-xs">
+                          <div className="flex items-center justify-between text-xs">
+                            <div className="flex items-center space-x-1.5">
+                              <span className="font-bold text-slate-800">Proposed Comment Draft</span>
+                              <span className="text-[10px] bg-indigo-100 text-indigo-700 font-mono px-1.5 py-0.2 rounded font-medium">
+                                {draftState.data.model}
+                              </span>
+                              {draftState.isEdited && (
+                                <span className="text-[10px] bg-amber-100 text-amber-800 font-semibold px-1.5 py-0.2 rounded">
+                                  Edited
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              onClick={handleDiscardDraft}
+                              className="text-slate-400 hover:text-slate-600 text-xs cursor-pointer"
+                            >
+                              Discard
+                            </button>
+                          </div>
+
+                          <textarea
+                            rows={3}
+                            value={draftState.editedComment}
+                            onChange={(e) =>
+                              setDraftState((prev) => ({
+                                ...prev,
+                                editedComment: e.target.value,
+                                isEdited: e.target.value !== prev.data.comment,
+                              }))
+                            }
+                            placeholder="Review and edit the AI suggested draft..."
+                            className="w-full p-2.5 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-indigo-500 text-slate-800 leading-relaxed"
+                          />
+
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-1 border-t border-slate-100 text-xs">
+                            <span className="text-[11px] text-slate-500 italic">
+                              Synergy Reason: {draftState.data.reason}
+                            </span>
+                            <button
+                              onClick={() => handlePublishDraft(selectedPost.id)}
+                              disabled={publishingDraft || !draftState.editedComment.trim()}
+                              className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 transition cursor-pointer shadow-xs flex items-center justify-center space-x-1.5"
+                            >
+                              <span>
+                                {publishingDraft ? 'Publishing...' : '🚀 Explicitly Publish Comment'}
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 2. MANUAL COMMENT FALLBACK */}
+                    <div>
+                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                        Or Post a Manual Comment:
+                      </span>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={commentText}
+                          onChange={(e) => setCommentText(e.target.value)}
+                          placeholder={`Write manual comment as ${activeAgent?.company_name}...`}
+                          className="flex-1 px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <button
+                          onClick={() => handleAddComment(selectedPost.id)}
+                          disabled={submittingComment || !commentText.trim()}
+                          className="px-4 py-2 bg-slate-800 text-white rounded-lg text-xs font-semibold hover:bg-slate-900 disabled:opacity-50 transition cursor-pointer shadow-xs"
+                        >
+                          {submittingComment ? 'Posting...' : 'Manual Comment'}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
