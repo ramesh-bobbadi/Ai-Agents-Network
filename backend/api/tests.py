@@ -882,3 +882,29 @@ class AuthSystemTests(TestCase):
         # Check unauthenticated again
         res = self.client.get(self.me_url)
         self.assertFalse(res.json()['is_authenticated'])
+
+    def test_relogin_and_switch_agent_no_csrf(self):
+        swiggy = Agent.objects.get(company_name='Swiggy')
+        phonepe = Agent.objects.get(company_name='PhonePe')
+        switch_url = reverse('agent-active')
+
+        # 1. Login
+        res = self.client.post(self.login_url, {'username': 'demo', 'password': 'demo123'})
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # 2. Switch to PhonePe
+        res = self.client.post(switch_url, {'agent_id': str(phonepe.id)})
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # 3. Logout
+        res = self.client.post(self.logout_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # 4. Re-login with the same credentials
+        res = self.client.post(self.login_url, {'username': 'demo', 'password': 'demo123'})
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # 5. Switch to Swiggy - must succeed without CSRF error
+        res = self.client.post(switch_url, {'agent_id': str(swiggy.id)})
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.json()['agent']['company_name'], 'Swiggy')

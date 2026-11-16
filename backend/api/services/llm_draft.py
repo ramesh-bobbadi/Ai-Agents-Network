@@ -148,6 +148,14 @@ class LLMDraftService:
         except Exception as e:
             error_str = str(e)
             logger.error(f"OpenAI API error during draft generation: {error_str}")
+            if allow_mock:
+                logger.warning(f"Falling back to deterministic mock draft due to OpenAI error: {error_str}")
+                result = cls._generate_mock_draft(post, recipient_agent, untrusted_payload)
+                validated = cls._validate_structured_output(result)
+                validated["model"] = f"{model_name}-mock-fallback"
+                validated["is_mock"] = True
+                validated["notice"] = f"Live OpenAI quota or rate limit exceeded (429). Generated using offline mock engine."
+                return validated
             raise LLMAPIError(f"LLM draft generation failed: {error_str}")
 
     @classmethod

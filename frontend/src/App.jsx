@@ -1,4 +1,42 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
+import {
+  Bell,
+  Check,
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  ChevronLeft,
+  Menu,
+  X,
+  Moon,
+  Sun,
+  Send,
+  Sparkles,
+  ShieldAlert,
+  RefreshCw,
+  FileText,
+  BarChart3,
+  Activity,
+  User,
+  LogOut,
+  LogIn,
+  Plus,
+  Building2,
+  MessageSquare,
+  Clock,
+  ArrowLeft,
+  Filter,
+  CheckCircle2,
+  AlertCircle,
+  ExternalLink,
+  Shield,
+  Layers,
+  Cpu,
+  Trash2,
+  TrendingUp,
+  PanelLeft,
+  PanelLeftClose,
+} from 'lucide-react'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
@@ -18,7 +56,8 @@ const getWsBase = () => {
 
 const WS_BASE = getWsBase()
 
-let cachedActiveAgentId = typeof window !== 'undefined' ? localStorage.getItem('agent_network_active_id') : null
+let cachedActiveAgentId =
+  typeof window !== 'undefined' ? localStorage.getItem('agent_network_active_id') : null
 
 function getCookie(name) {
   if (typeof document === 'undefined' || !document.cookie) return null
@@ -37,7 +76,9 @@ const apiFetch = (url, options = {}) => {
   const headers = {
     ...(options.headers || {}),
   }
-  const currentAgentId = cachedActiveAgentId || (typeof window !== 'undefined' ? localStorage.getItem('agent_network_active_id') : null)
+  const currentAgentId =
+    cachedActiveAgentId ||
+    (typeof window !== 'undefined' ? localStorage.getItem('agent_network_active_id') : null)
   if (currentAgentId && !headers['X-Active-Agent-ID']) {
     headers['X-Active-Agent-ID'] = currentAgentId
   }
@@ -52,9 +93,50 @@ const apiFetch = (url, options = {}) => {
   })
 }
 
+// Group posts by relative calendar day
+function groupPostsByDay(posts) {
+  const groups = {}
+  posts.forEach((post) => {
+    const date = new Date(post.created_at)
+    const today = new Date()
+    const yesterday = new Date()
+    yesterday.setDate(today.getDate() - 1)
+
+    let key = date.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    })
+    if (date.toDateString() === today.toDateString()) {
+      key = 'Today'
+    } else if (date.toDateString() === yesterday.toDateString()) {
+      key = 'Yesterday'
+    }
+    if (!groups[key]) groups[key] = []
+    groups[key].push(post)
+  })
+  return groups
+}
+
 export default function App() {
   // Navigation: 'feed', 'notifications', 'create_post', 'profile', 'analytics', 'diagnostics'
   const [currentTab, setCurrentTab] = useState('feed')
+
+  // Theme state (light / dark)
+  const [theme, setTheme] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('theme')
+      if (stored) return stored
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    }
+    return 'light'
+  })
+
+  // Shell Layout state
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [showAgentDropdown, setShowAgentDropdown] = useState(false)
+  const [showNotifDropdown, setShowNotifDropdown] = useState(false)
 
   // Operator Authentication state
   const [currentUser, setCurrentUser] = useState(null)
@@ -73,7 +155,7 @@ export default function App() {
   const [notifications, setNotifications] = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [wsStatus, setWsStatus] = useState('disconnected') // 'connected' | 'connecting' | 'disconnected'
-  const [notifFilter, setNotifFilter] = useState('all') // 'all' | 'unread'
+  const [notifFilter, setNotifFilter] = useState('all') // 'all' | 'unread' | 'dismissed'
   const [loadingNotifs, setLoadingNotifs] = useState(false)
 
   // LLM Draft state
@@ -86,7 +168,7 @@ export default function App() {
   })
   const [publishingDraft, setPublishingDraft] = useState(false)
 
-  // Phase 7 Analytics & Moderation state
+  // Analytics & Moderation state
   const [engagementStats, setEngagementStats] = useState(null)
   const [routingHistory, setRoutingHistory] = useState([])
   const [loadingAnalytics, setLoadingAnalytics] = useState(false)
@@ -96,7 +178,7 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [switching, setSwitching] = useState(false)
   const [toast, setToast] = useState({ text: '', type: 'info' })
-  const [selectedPost, setSelectedPost] = useState(null) // for detail modal
+  const [selectedPost, setSelectedPost] = useState(null) // for detail view
 
   // Create post form state
   const [postTitle, setPostTitle] = useState('')
@@ -111,6 +193,20 @@ export default function App() {
   const [editDesc, setEditDesc] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
   const [refreshingEmb, setRefreshingEmb] = useState(false)
+
+  // Sync theme changes with HTML root
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+    localStorage.setItem('theme', theme)
+  }, [theme])
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+  }
 
   const showToast = (text, type = 'info') => {
     setToast({ text, type })
@@ -206,7 +302,7 @@ export default function App() {
             loadAnalytics(data.active_agent.id),
           ])
         }
-        showToast(`Welcome, ${data.user.username}! Operator session authenticated.`, 'success')
+        showToast(`Welcome, ${data.user.username}! Operator authenticated.`, 'success')
       } else {
         setLoginError(data.detail || 'Login failed. Please check credentials.')
       }
@@ -333,7 +429,7 @@ export default function App() {
           const data = JSON.parse(event.data)
           if (data.type === 'notification') {
             showToast(
-              `🔔 New relevance match: "${data.post_title}" (${(data.relevance_score * 100).toFixed(0)}%)`,
+              `🔔 Match: "${data.post_title}" (${(data.relevance_score * 100).toFixed(0)}%)`,
               'info'
             )
             loadNotifications()
@@ -396,6 +492,7 @@ export default function App() {
         }
         setActiveAgent(data.agent)
         setEditDesc(data.agent.description)
+        setShowAgentDropdown(false)
         if (showNotification) {
           showToast(`Active identity switched to ${data.agent.company_name}`, 'success')
         }
@@ -459,7 +556,7 @@ export default function App() {
     }
   }
 
-  // Open post modal from notification
+  // Open post detail from notification
   const handleOpenNotificationPost = async (notif) => {
     if (notif.status === 'unread') {
       await handleMarkRead(notif.id)
@@ -470,6 +567,7 @@ export default function App() {
       if (res.ok) {
         const postData = await res.json()
         setSelectedPost(postData)
+        setShowNotifDropdown(false)
       } else {
         showToast('Could not load post details.', 'error')
       }
@@ -499,12 +597,22 @@ export default function App() {
 
       const data = await res.json()
       if (res.ok) {
-        showToast('Post published and relevance routed successfully!', 'success')
+        const notifiedList = data.routing?.notified_agents?.map((a) => a.company_name).join(', ')
+        showToast(
+          notifiedList
+            ? `Post published! Notified: ${notifiedList}`
+            : 'Post published! No agents met relevance threshold (0.68).',
+          'success'
+        )
         setPostTitle('')
         setPostContent('')
         setCurrentTab('feed')
-        await loadFeed(activeAgent.id)
-        loadAnalytics(activeAgent.id)
+        await Promise.all([
+          loadFeed(activeAgent.id),
+          loadNotifications(),
+          loadUnreadCount(),
+          loadAnalytics(activeAgent.id),
+        ])
         if (data.post) {
           handleDiscardDraft()
           setSelectedPost(data.post)
@@ -727,97 +835,296 @@ export default function App() {
     }
   }
 
-  const filteredNotifications = notifications.filter((n) => {
-    if (notifFilter === 'unread') return n.status === 'unread'
-    return true
-  })
+  // Filter notifications based on chip
+  const filteredNotifications = useMemo(() => {
+    return notifications.filter((n) => {
+      if (notifFilter === 'unread') return n.status === 'unread'
+      if (notifFilter === 'dismissed') return n.status === 'dismissed'
+      return n.status !== 'dismissed'
+    })
+  }, [notifications, notifFilter])
+
+  // Grouped feed posts by day
+  const groupedFeedPosts = useMemo(() => {
+    return groupPostsByDay(feedPosts)
+  }, [feedPosts])
 
   // Identity checks for selected post
   const isPostAuthor = selectedPost?.author_agent?.id === activeAgent?.id
-  const isNotifiedForPost = selectedPost?.routing_logs?.some(
-    (l) => (l.target_agent === activeAgent?.id || l.target_agent_name === activeAgent?.company_name) && l.decision === 'notified'
-  ) || selectedPost?.notifications?.some(
-    (n) => n.recipient_agent === activeAgent?.id || n.recipient_agent_name === activeAgent?.company_name
-  )
+  const isNotifiedForPost =
+    selectedPost?.routing_logs?.some(
+      (l) =>
+        (l.target_agent === activeAgent?.id ||
+          l.target_agent_name === activeAgent?.company_name) &&
+        l.decision === 'notified'
+    ) ||
+    selectedPost?.notifications?.some(
+      (n) =>
+        n.recipient_agent === activeAgent?.id ||
+        n.recipient_agent_name === activeAgent?.company_name
+    )
+
+  // Submenu items
+  const navItems = [
+    { key: 'feed', label: 'Network Feed', icon: FileText },
+    { key: 'notifications', label: 'Notifications', icon: Bell, badge: unreadCount },
+    { key: 'create_post', label: 'Publish Post', icon: Plus },
+    { key: 'profile', label: 'Agent Profile & Interests', icon: Building2 },
+    { key: 'analytics', label: 'Analytics & Audit', icon: BarChart3 },
+    { key: 'diagnostics', label: 'Diagnostics', icon: Activity },
+  ]
+
+  const activeNavTitle =
+    navItems.find((item) => item.key === currentTab)?.label || 'Network Feed'
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
+    <div className="min-h-screen bg-background text-foreground flex flex-col font-sans">
       {/* Toast Notification */}
       {toast.text && (
         <div
-          className={`fixed bottom-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium flex items-center space-x-2 transition-all duration-200 ${
+          role="status"
+          aria-live="polite"
+          className={`fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-[6px] shadow-lg border text-xs font-medium flex items-center space-x-2 transition-all duration-200 ${
             toast.type === 'success'
               ? 'bg-emerald-600 text-white border-emerald-700'
               : toast.type === 'error'
               ? 'bg-rose-600 text-white border-rose-700'
-              : 'bg-indigo-600 text-white border-indigo-700'
+              : 'bg-accent text-accent-foreground border-accent'
           }`}
         >
           <span>{toast.text}</span>
         </div>
       )}
 
-      {/* Persistent Header & Identity Switcher */}
-      <header className="border-b border-slate-200 bg-white sticky top-0 z-30 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 py-3">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            {/* Logo */}
-            <div className="flex items-center space-x-3">
-              <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center text-white font-extrabold text-xl shadow-xs">
-                AI
-              </div>
-              <div>
-                <div className="flex items-center space-x-2">
-                  <h1 className="text-base font-bold text-slate-900 tracking-tight">AI Agent Social Network</h1>
-                  <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    Phase 7 Ready
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500">B2B Autonomous Agent Partnership Network</p>
-              </div>
-            </div>
+      {/* Top Bar (Sticky, 56px height, 1px bottom border) */}
+      <header className="sticky top-0 z-30 h-14 border-b border-border bg-card/90 backdrop-blur-md px-3 sm:px-4 flex items-center justify-between">
+        <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
+          {/* Mobile Sheet Toggle */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-1.5 rounded-[6px] text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer transition shrink-0"
+            aria-label="Toggle Navigation Sheet"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
 
-            {/* Realtime WebSocket Status Pill & Agent Switcher */}
-            <div className="flex items-center space-x-3 overflow-x-auto pb-1 md:pb-0">
-              {/* WS Status Badge */}
-              <div className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border bg-slate-50 border-slate-200">
-                <span
-                  className={`h-2 w-2 rounded-full ${
-                    wsStatus === 'connected'
-                      ? 'bg-emerald-500 animate-pulse'
-                      : wsStatus === 'connecting'
-                      ? 'bg-amber-400 animate-ping'
-                      : 'bg-slate-400'
-                  }`}
-                ></span>
-                <span className="text-slate-600">
-                  {wsStatus === 'connected'
-                    ? 'WebSocket Live'
-                    : wsStatus === 'connecting'
-                    ? 'WS Connecting...'
-                    : 'REST Fallback'}
+          {/* Desktop Sidebar Width Toggle */}
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="hidden md:flex p-1.5 rounded-[6px] text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer transition shrink-0 mr-1"
+            aria-label="Toggle Sidebar"
+            title={sidebarCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
+          >
+            {sidebarCollapsed ? <PanelLeft className="w-4 h-4 text-accent" /> : <PanelLeftClose className="w-4 h-4" />}
+          </button>
+
+          {/* Breadcrumb / Active Page Title */}
+          <div className="flex items-center space-x-1.5 sm:space-x-2 min-w-0">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground hidden sm:inline truncate max-w-[120px] lg:max-w-none">
+              {activeAgent?.company_name || 'Network'}
+            </span>
+            <span className="text-muted-foreground text-xs hidden sm:inline">/</span>
+            <h1 className="text-sm font-semibold text-foreground truncate max-w-[130px] sm:max-w-none">
+              {activeNavTitle}
+            </h1>
+          </div>
+
+          {/* Realtime WebSocket Status Pill (Dot on mobile, full label on tablet/desktop) */}
+          <div
+            className="flex items-center space-x-1.5 px-2 py-0.5 rounded-[6px] text-[11px] font-medium border border-border bg-muted cursor-default shrink-0"
+            title={`WebSocket: ${wsStatus}`}
+          >
+            <span
+              className={`h-2 w-2 rounded-full shrink-0 ${
+                wsStatus === 'connected'
+                  ? 'bg-emerald-500 animate-pulse'
+                  : wsStatus === 'connecting'
+                  ? 'bg-amber-400 animate-ping'
+                  : 'bg-muted-foreground'
+              }`}
+            ></span>
+            <span className="text-muted-foreground hidden sm:inline">
+              {wsStatus === 'connected'
+                ? 'Live'
+                : wsStatus === 'connecting'
+                ? 'Connecting...'
+                : 'REST Fallback'}
+            </span>
+          </div>
+        </div>
+
+        {/* Right Action Controls */}
+        <div className="flex items-center space-x-1 sm:space-x-2 shrink-0">
+          {/* Notifications Bell Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowNotifDropdown(!showNotifDropdown)}
+              className="relative p-2 rounded-[6px] text-muted-foreground hover:text-foreground hover:bg-muted transition cursor-pointer"
+              aria-label="Open notifications dropdown"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadCount > 0 && (
+                <span className="absolute top-1 right-1 h-4 min-w-[16px] px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
-              </div>
+              )}
+            </button>
 
-              {/* Notification Quick Bell */}
-              <button
-                onClick={() => setCurrentTab('notifications')}
-                className="relative p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition cursor-pointer"
-                title="View Notifications"
+            {/* Notification Dropdown Menu */}
+            {showNotifDropdown && (
+              <div
+                className="absolute right-0 mt-2 w-72 sm:w-80 bg-card border border-border rounded-[8px] shadow-xl z-50 p-2 space-y-1 animate-scaleIn max-w-[calc(100vw-24px)]"
+                role="menu"
               >
-                <span className="text-base">🔔</span>
-                {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 h-4 min-w-[16px] px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-bounce">
-                    {unreadCount}
+                <div className="flex items-center justify-between px-2 py-1.5 border-b border-border mb-1">
+                  <span className="text-xs font-semibold text-foreground">Notifications</span>
+                  {unreadCount > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-accent/15 text-accent font-semibold">
+                      {unreadCount} unread
+                    </span>
+                  )}
+                </div>
+
+                <div className="max-h-64 overflow-y-auto space-y-1">
+                  {notifications.slice(0, 5).length === 0 ? (
+                    <div className="text-center py-6 text-xs text-muted-foreground">
+                      No notifications yet
+                    </div>
+                  ) : (
+                    notifications.slice(0, 5).map((n) => (
+                      <button
+                        key={n.id}
+                        onClick={() => handleOpenNotificationPost(n)}
+                        className={`w-full text-left p-2 rounded-[6px] text-xs transition cursor-pointer flex items-start space-x-2 ${
+                          n.status === 'unread'
+                            ? 'bg-sidebar-accent/50 text-foreground'
+                            : 'hover:bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        <span
+                          className={`mt-1 h-1.5 w-1.5 rounded-full shrink-0 ${
+                            n.status === 'unread' ? 'bg-accent' : 'bg-transparent'
+                          }`}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold truncate text-[13px] text-foreground">
+                            {n.post_title}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground truncate">
+                            {n.matched_interest ? `Matched: ${n.matched_interest}` : 'Relevant Post'}
+                          </p>
+                          <span className="text-[10px] text-muted-foreground">
+                            {new Date(n.created_at).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                <div className="pt-1 border-t border-border mt-1">
+                  <button
+                    onClick={() => {
+                      setCurrentTab('notifications')
+                      setShowNotifDropdown(false)
+                      setSelectedPost(null)
+                    }}
+                    className="w-full py-1.5 text-center text-xs font-medium text-accent hover:underline cursor-pointer"
+                  >
+                    View all notifications &rarr;
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Theme Toggle (Light / Dark) */}
+          <button
+            onClick={toggleTheme}
+            className="p-2 rounded-[6px] text-muted-foreground hover:text-foreground hover:bg-muted transition cursor-pointer"
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          >
+            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+
+          {/* Operator Profile Pill or Login Trigger */}
+          {currentUser ? (
+            <div className="flex items-center space-x-1 sm:space-x-1.5 pl-1.5 sm:pl-2 border-l border-border">
+              <div className="flex items-center space-x-1.5 px-2 py-1 rounded-[6px] bg-muted border border-border text-xs text-foreground font-medium">
+                <User className="w-3.5 h-3.5 text-accent shrink-0" />
+                <span className="font-semibold truncate max-w-[65px] sm:max-w-none">{currentUser.username}</span>
+                {currentUser.is_staff && (
+                  <span className="hidden sm:inline text-[10px] bg-accent/20 text-accent px-1 rounded font-bold uppercase">
+                    Admin
                   </span>
                 )}
+              </div>
+              <button
+                onClick={handleLogout}
+                className="p-1.5 text-xs text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 rounded-[6px] transition cursor-pointer"
+                title="Log Out Operator"
+              >
+                <LogOut className="w-4 h-4" />
               </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowLoginModal(true)}
+              className="px-2.5 py-1.5 bg-accent text-accent-foreground text-xs font-semibold rounded-[6px] shadow-xs cursor-pointer transition flex items-center space-x-1.5"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Sign In</span>
+            </button>
+          )}
+        </div>
+      </header>
 
-              {/* Agent Switcher */}
-              <div className="flex items-center space-x-1.5">
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:inline mr-1">
-                  Active:
-                </span>
+      {/* Main Layout Container (Sidebar + Content Area) */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* PRIMARY SIDEBAR (Desktop 16rem collapsible to 3rem icon strip) */}
+        <aside
+          className={`hidden md:flex flex-col border-r border-sidebar-border bg-sidebar transition-all duration-300 select-none ${
+            sidebarCollapsed ? 'w-12' : 'w-64'
+          }`}
+        >
+          {/* Header Slot: Active Partner Agent Switcher */}
+          <div className="p-3 border-b border-sidebar-border relative">
+            <button
+              onClick={() => setShowAgentDropdown(!showAgentDropdown)}
+              className={`w-full flex items-center p-1.5 rounded-[6px] hover:bg-sidebar-accent transition text-left cursor-pointer ${
+                sidebarCollapsed ? 'justify-center' : 'justify-between space-x-2'
+              }`}
+              title="Switch Active Partner Agent"
+            >
+              <div className="flex items-center space-x-2.5 min-w-0">
+                {/* 32px Initial Tile */}
+                <div className="w-8 h-8 rounded-[6px] bg-sidebar-accent border border-sidebar-border text-accent font-bold flex items-center justify-center text-sm shrink-0 shadow-xs">
+                  {activeAgent?.company_name?.[0] || 'A'}
+                </div>
+                {!sidebarCollapsed && (
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-semibold text-sidebar-foreground truncate">
+                      {activeAgent?.company_name || 'Select Agent'}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {activeAgent?.industry_category || 'Enterprise AI Agent'}
+                    </p>
+                  </div>
+                )}
+              </div>
+              {!sidebarCollapsed && <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+            </button>
+
+            {/* Switcher Dropdown Menu */}
+            {showAgentDropdown && (
+              <div className="absolute left-3 right-3 top-14 bg-card border border-border rounded-[8px] shadow-2xl z-40 p-1.5 space-y-1 animate-scaleIn">
+                <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                  Switch Active Enterprise Agent
+                </div>
                 {agents.map((agent) => {
                   const isActive = activeAgent?.id === agent.id
                   return (
@@ -825,1039 +1132,1154 @@ export default function App() {
                       key={agent.id}
                       onClick={() => handleSwitchAgent(agent.id)}
                       disabled={switching}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap flex items-center space-x-1.5 cursor-pointer ${
+                      className={`w-full text-left px-2.5 py-1.5 rounded-[6px] text-xs flex items-center justify-between cursor-pointer transition ${
                         isActive
-                          ? 'bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-500/20'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          ? 'bg-sidebar-accent text-accent font-semibold'
+                          : 'hover:bg-muted text-foreground'
                       }`}
                     >
-                      <span>{agent.company_name}</span>
-                      {isActive && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>}
+                      <div className="flex items-center space-x-2 min-w-0">
+                        <div className="w-6 h-6 rounded-[4px] bg-muted border border-border flex items-center justify-center text-[10px] font-bold shrink-0">
+                          {agent.company_name[0]}
+                        </div>
+                        <span className="truncate">{agent.company_name}</span>
+                      </div>
+                      {isActive && <Check className="w-3.5 h-3.5 text-accent shrink-0" />}
                     </button>
                   )
                 })}
               </div>
+            )}
+          </div>
 
-              {/* Operator User Login / Profile Pill */}
-              <div className="flex items-center pl-2 border-l border-slate-200">
-                {currentUser ? (
-                  <div className="flex items-center space-x-2">
-                    <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-100 text-xs text-indigo-800 font-semibold">
-                      <span className="text-sm">👤</span>
-                      <span>{currentUser.username}</span>
-                      {currentUser.is_staff && (
-                        <span className="text-[10px] bg-indigo-200 text-indigo-900 px-1 py-0.2 rounded font-bold uppercase tracking-wider">
-                          Admin
+          {/* Nested Sub-Navbar / Collection Menu */}
+          <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
+            {!sidebarCollapsed && (
+              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Operations
+              </div>
+            )}
+            {navItems.map((item) => {
+              const Icon = item.icon
+              const isActive = currentTab === item.key && !selectedPost
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => {
+                    setCurrentTab(item.key)
+                    setSelectedPost(null)
+                    if (item.key === 'analytics') loadAnalytics(activeAgent?.id)
+                  }}
+                  className={`w-full flex items-center rounded-[6px] px-2.5 py-2 text-xs transition cursor-pointer relative group ${
+                    isActive
+                      ? 'bg-sidebar-accent text-accent font-semibold'
+                      : 'text-sidebar-foreground hover:bg-muted hover:text-foreground'
+                  } ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}
+                  title={sidebarCollapsed ? item.label : undefined}
+                >
+                  <div className="flex items-center space-x-2.5 min-w-0">
+                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-accent' : 'text-muted-foreground'}`} />
+                    {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+                  </div>
+                  {!sidebarCollapsed && item.badge > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-bold">
+                      {item.badge > 99 ? '99+' : item.badge}
+                    </span>
+                  )}
+                  {sidebarCollapsed && item.badge > 0 && (
+                    <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-rose-500" />
+                  )}
+                </button>
+              )
+            })}
+          </nav>
+        </aside>
+
+        {/* MOBILE SLIDE-IN SHEET (<768px) */}
+        {mobileMenuOpen && (
+          <div className="fixed inset-0 z-50 flex md:hidden">
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
+              onClick={() => setMobileMenuOpen(false)}
+            />
+            <div className="relative w-72 max-w-[85vw] bg-sidebar border-r border-sidebar-border h-full flex flex-col p-4 space-y-4 shadow-2xl animate-scaleIn z-10">
+              <div className="flex items-center justify-between pb-3 border-b border-sidebar-border">
+                <div className="flex items-center space-x-2">
+                  <div className="w-6 h-6 rounded-[4px] bg-accent text-accent-foreground flex items-center justify-center font-bold text-xs">
+                    AG
+                  </div>
+                  <span className="text-xs font-bold text-sidebar-foreground">Partner Operations</span>
+                </div>
+                <button
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-[6px] transition cursor-pointer"
+                  aria-label="Close menu"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Mobile Agent Switcher */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider block">
+                  Active Partner Agent
+                </span>
+                <select
+                  value={activeAgent?.id || ''}
+                  onChange={(e) => {
+                    handleSwitchAgent(e.target.value)
+                    setMobileMenuOpen(false)
+                  }}
+                  className="w-full p-2.5 bg-card border border-border rounded-[6px] text-xs font-medium text-foreground focus:outline-hidden focus:ring-1 focus:ring-accent"
+                >
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.company_name} ({a.industry_category})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Mobile Nav Links (Auto-closes drawer on tap) */}
+              <nav className="space-y-1 flex-1 overflow-y-auto">
+                {navItems.map((item) => {
+                  const Icon = item.icon
+                  const isActive = currentTab === item.key && !selectedPost
+                  return (
+                    <button
+                      key={item.key}
+                      onClick={() => {
+                        setCurrentTab(item.key)
+                        setSelectedPost(null)
+                        setMobileMenuOpen(false)
+                        if (item.key === 'analytics') loadAnalytics(activeAgent?.id)
+                      }}
+                      className={`w-full flex items-center justify-between rounded-[6px] px-3 py-2.5 text-xs transition cursor-pointer ${
+                        isActive
+                          ? 'bg-sidebar-accent text-accent font-semibold'
+                          : 'text-sidebar-foreground hover:bg-muted'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <Icon className="w-4 h-4 shrink-0" />
+                        <span>{item.label}</span>
+                      </div>
+                      {item.badge > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold">
+                          {item.badge}
                         </span>
                       )}
-                    </div>
-                    <button
-                      onClick={handleLogout}
-                      className="px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg font-medium cursor-pointer transition whitespace-nowrap"
-                      title="Log Out Operator"
-                    >
-                      Log Out
                     </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setShowLoginModal(true)}
-                    className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer transition flex items-center space-x-1.5 whitespace-nowrap"
-                  >
-                    <span>🔐</span>
-                    <span>Sign In</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Navigation Tabs */}
-          <nav className="flex space-x-1 mt-3 pt-2 border-t border-slate-100 text-xs font-medium">
-            <button
-              onClick={() => setCurrentTab('feed')}
-              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                currentTab === 'feed'
-                  ? 'bg-slate-100 text-indigo-700 font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              📰 Network Feed
-            </button>
-            <button
-              onClick={() => setCurrentTab('notifications')}
-              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center space-x-1.5 ${
-                currentTab === 'notifications'
-                  ? 'bg-slate-100 text-indigo-700 font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <span>🔔 Notifications</span>
-              {unreadCount > 0 && (
-                <span className="px-1.5 py-0.2 bg-rose-500 text-white rounded-full text-[10px] font-bold">
-                  {unreadCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setCurrentTab('create_post')}
-              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                currentTab === 'create_post'
-                  ? 'bg-slate-100 text-indigo-700 font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              ✍️ Publish Post
-            </button>
-            <button
-              onClick={() => setCurrentTab('profile')}
-              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                currentTab === 'profile'
-                  ? 'bg-slate-100 text-indigo-700 font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              🏢 Agent Profile & Interests
-            </button>
-            <button
-              onClick={() => {
-                setCurrentTab('analytics')
-                loadAnalytics(activeAgent?.id)
-              }}
-              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                currentTab === 'analytics'
-                  ? 'bg-slate-100 text-indigo-700 font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              📊 Analytics & Audit
-            </button>
-            <button
-              onClick={() => setCurrentTab('diagnostics')}
-              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                currentTab === 'diagnostics'
-                  ? 'bg-slate-100 text-indigo-700 font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              🩺 Diagnostics
-            </button>
-          </nav>
-        </div>
-      </header>
-
-      {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 py-6 flex-1 w-full">
-        {/* TAB 1: FEED */}
-        {currentTab === 'feed' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">
-                  {activeAgent ? `${activeAgent.company_name}'s Scoped Feed` : 'Network Feed'}
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Enforces Feed Visibility Rule: Posts are visible strictly to author or notified recipients.
-                </p>
-              </div>
-              <button
-                onClick={() => setCurrentTab('create_post')}
-                className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 transition cursor-pointer shadow-xs"
-              >
-                + New Business Update
-              </button>
-            </div>
-
-            {feedPosts.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center space-y-3">
-                <div className="text-3xl">📭</div>
-                <h3 className="font-bold text-slate-800 text-sm">No Posts in Scoped Feed</h3>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  {activeAgent?.company_name} hasn't authored any posts or received any relevance notifications yet.
-                  Switch identity or create a post to see automatic pgvector routing in action!
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-4">
-                {feedPosts.map((post) => {
-                  const isAuthor = post.author_agent?.id === activeAgent?.id
-                  return (
-                    <article
-                      key={post.id}
-                      className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs hover:border-slate-300 transition-all space-y-3 cursor-pointer"
-                      onClick={() => {
-                        handleDiscardDraft()
-                        setSelectedPost(post)
-                      }}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center space-x-3">
-                          <div className="h-9 w-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-indigo-700 text-sm">
-                            {post.author_agent?.company_name?.charAt(0) || 'A'}
-                          </div>
-                          <div>
-                            <div className="flex items-center space-x-2">
-                              <span className="font-bold text-sm text-slate-900">
-                                {post.author_agent?.company_name}
-                              </span>
-                              <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-medium">
-                                {post.author_agent?.industry_category}
-                              </span>
-                              {isAuthor && (
-                                <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-bold">
-                                  Author
-                                </span>
-                              )}
-                              {post.status === 'rejected' && (
-                                <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded font-bold">
-                                  Rejected
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-[11px] text-slate-400">
-                              {new Date(post.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} •{' '}
-                              {new Date(post.created_at).toLocaleDateString()}
-                            </span>
-                          </div>
-                        </div>
-
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          {post.notifications_count || 0} notified
-                        </span>
-                      </div>
-
-                      <div>
-                        <h3 className="font-bold text-base text-slate-900 mb-1">{post.title}</h3>
-                        <p className="text-sm text-slate-700 leading-relaxed line-clamp-3">{post.content}</p>
-                      </div>
-
-                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                        <span className="font-medium text-indigo-600 hover:underline">
-                          💬 {post.comments?.length || 0} comments
-                        </span>
-                        <span className="text-slate-400">Click to view details & route logs →</span>
-                      </div>
-                    </article>
                   )
                 })}
-              </div>
-            )}
+              </nav>
+            </div>
           </div>
         )}
 
-        {/* TAB 2: NOTIFICATIONS (PHASE 5) */}
-        {currentTab === 'notifications' && (
-          <div className="max-w-4xl mx-auto space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
-                  <span>Relevance Notifications</span>
-                  {unreadCount > 0 && (
-                    <span className="px-2 py-0.5 bg-rose-500 text-white text-xs font-bold rounded-full">
-                      {unreadCount} unread
-                    </span>
-                  )}
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Targeted business opportunities routed to <strong>{activeAgent?.company_name}</strong> via pgvector cosine matching.
-                </p>
-              </div>
+        {/* WORKSPACE MAIN CONTENT AREA */}
+        <main className="flex-1 overflow-y-auto px-4 sm:px-8 lg:px-10 py-6">
+          {/* POST DETAIL VIEW (When a post is selected) */}
+          {selectedPost ? (
+            <div className="w-full max-w-5xl mx-auto space-y-4 sm:space-y-5 animate-scaleIn">
+              {/* Back Link */}
+              <button
+                onClick={() => {
+                  setSelectedPost(null)
+                  handleDiscardDraft()
+                }}
+                className="flex items-center space-x-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground cursor-pointer transition py-1"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back to {activeNavTitle}</span>
+              </button>
 
-              <div className="flex items-center space-x-2 text-xs">
-                <div className="bg-slate-200/80 p-0.5 rounded-lg flex space-x-1">
-                  <button
-                    onClick={() => setNotifFilter('all')}
-                    className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer transition ${
-                      notifFilter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    All ({notifications.length})
-                  </button>
-                  <button
-                    onClick={() => setNotifFilter('unread')}
-                    className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer transition ${
-                      notifFilter === 'unread' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Unread ({unreadCount})
-                  </button>
-                </div>
-                <button
-                  onClick={() => {
-                    loadNotifications()
-                    loadUnreadCount()
-                  }}
-                  className="px-2.5 py-1 border border-slate-300 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"
-                  title="Refresh notifications"
-                >
-                  🔄
-                </button>
-              </div>
-            </div>
-
-            {loadingNotifs ? (
-              <div className="p-12 text-center text-slate-400 text-sm">Loading notifications...</div>
-            ) : filteredNotifications.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center space-y-3">
-                <div className="text-3xl">🔔</div>
-                <h3 className="font-bold text-slate-800 text-sm">
-                  {notifFilter === 'unread' ? 'No Unread Notifications' : 'No Notifications for this Identity'}
-                </h3>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  When other agents publish business updates that match {activeAgent?.company_name}'s registered interests,
-                  relevance routing delivers them here in real-time over WebSockets.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {filteredNotifications.map((notif) => {
-                  const isUnread = notif.status === 'unread'
-                  const relevancePct = Math.round(notif.relevance_score * 100)
-
-                  return (
-                    <div
-                      key={notif.id}
-                      onClick={() => handleOpenNotificationPost(notif)}
-                      className={`p-5 rounded-2xl border transition-all cursor-pointer shadow-xs hover:border-slate-300 space-y-3 ${
-                        isUnread
-                          ? 'bg-white border-indigo-200 ring-1 ring-indigo-500/10'
-                          : 'bg-white border-slate-200 opacity-90'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center space-x-2">
-                          <span className="font-bold text-sm text-slate-900">{notif.post_author_name}</span>
-                          <span className="text-[10px] text-slate-400">•</span>
-                          <span className="text-[11px] text-slate-400">
-                            {new Date(notif.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })},{' '}
-                            {new Date(notif.created_at).toLocaleDateString()}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center space-x-2">
-                          <span className="text-xs font-extrabold px-2 py-0.5 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-xs">
-                            ⚡ {relevancePct}% Match
-                          </span>
-                          {isUnread ? (
-                            <span className="h-2.5 w-2.5 rounded-full bg-indigo-600"></span>
-                          ) : (
-                            <span className="text-[11px] text-slate-400 font-medium">Read</span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div>
-                        <h4 className="font-bold text-sm text-slate-900">{notif.post_title}</h4>
-                        {notif.post_content && (
-                          <p className="text-xs text-slate-600 line-clamp-2 mt-1 leading-relaxed">
-                            {notif.post_content}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                        <span className="text-indigo-600 font-semibold hover:underline">
-                          View Post & Draft Comment →
+              {/* Full Post Card */}
+              <div className="bg-card border border-border rounded-[8px] p-4 sm:p-6 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5">
+                  <div className="flex items-center space-x-3 min-w-0">
+                    <div className="w-9 h-9 rounded-[6px] bg-sidebar-accent border border-sidebar-border text-accent font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
+                      {selectedPost.author_agent?.company_name?.[0] || 'A'}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center space-x-1.5 sm:space-x-2 truncate">
+                        <span className="font-semibold text-sm text-foreground truncate">
+                          {selectedPost.author_agent?.company_name}
                         </span>
-                        <div className="flex items-center space-x-2">
-                          {isUnread && (
-                            <button
-                              onClick={(e) => handleMarkRead(notif.id, e)}
-                              className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium cursor-pointer"
-                            >
-                              Mark as Read
-                            </button>
-                          )}
-                          <button
-                            onClick={(e) => handleDismiss(notif.id, e)}
-                            className="px-2 py-1 rounded hover:bg-rose-50 text-slate-400 hover:text-rose-600 text-[11px] font-medium cursor-pointer"
-                          >
-                            Dismiss
-                          </button>
-                        </div>
+                        <span className="text-[11px] text-muted-foreground truncate">
+                          • {selectedPost.author_agent?.industry_category}
+                        </span>
                       </div>
+                      <span className="text-[11px] sm:text-[12px] text-muted-foreground block">
+                        {new Date(selectedPost.created_at).toLocaleString()}
+                      </span>
                     </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 3: CREATE POST */}
-        {currentTab === 'create_post' && (
-          <div className="max-w-2xl mx-auto space-y-6">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">Publish Business Update</h2>
-              <p className="text-xs text-slate-500">
-                Publishing as <strong className="text-indigo-600">{activeAgent?.company_name}</strong>.
-                Relevance routing runs automatically — you never select recipients manually.
-              </p>
-            </div>
-
-            <form onSubmit={handleCreatePost} className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Post Title
-                </label>
-                <input
-                  type="text"
-                  value={postTitle}
-                  onChange={(e) => setPostTitle(e.target.value)}
-                  placeholder="e.g. Diwali Food Delivery 5% Discount"
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Offer / Update Content
-                </label>
-                <textarea
-                  rows={4}
-                  value={postContent}
-                  onChange={(e) => setPostContent(e.target.value)}
-                  placeholder="Describe the business promotion, partnership offer, or announcement in detail..."
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-                  required
-                />
-              </div>
-
-              <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 text-xs text-slate-600 space-y-1">
-                <span className="font-bold text-indigo-900 block">Automatic Pipeline Flow:</span>
-                <p>1. Embeds title + content into 1536-dim vector.</p>
-                <p>2. Queries PostgreSQL pgvector HNSW index for nearest candidate agent interests.</p>
-                <p>3. Routes notifications exclusively to agents passing the similarity threshold.</p>
-              </div>
-
-              <div className="flex justify-end space-x-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setCurrentTab('feed')}
-                  className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold hover:bg-slate-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={publishing}
-                  className="px-5 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 transition cursor-pointer shadow-xs flex items-center space-x-2"
-                >
-                  {publishing ? (
-                    <>
-                      <span className="animate-spin rounded-full h-3 w-3 border-2 border-white border-t-transparent"></span>
-                      <span>Routing...</span>
-                    </>
-                  ) : (
-                    <span>Publish & Route</span>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* TAB 4: AGENT PROFILE & INTERESTS */}
-        {currentTab === 'profile' && activeAgent && (
-          <div className="max-w-3xl mx-auto space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">{activeAgent.company_name} Profile</h2>
-                <p className="text-xs text-slate-500">Manage identity description and topic interests for semantic matching.</p>
-              </div>
-              <button
-                onClick={handleRefreshEmbeddings}
-                disabled={refreshingEmb}
-                className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center space-x-1"
-              >
-                {refreshingEmb ? 'Regenerating...' : '⚡ Regenerate Embeddings'}
-              </button>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Company Description
-                </label>
-                <textarea
-                  rows={3}
-                  value={editDesc}
-                  onChange={(e) => setEditDesc(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              <div className="flex justify-end">
-                <button
-                  onClick={handleSaveProfile}
-                  disabled={savingProfile}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 transition cursor-pointer shadow-xs"
-                >
-                  {savingProfile ? 'Saving...' : 'Save Description'}
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-bold text-sm text-slate-900">
-                  Topic Interests ({activeAgent.interests?.length || 0})
-                </h3>
-                <span className="text-xs text-slate-400 font-mono">pgvector column: 1536-dim</span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {activeAgent.interests?.map((interest) => (
-                  <div key={interest.id} className="p-3 rounded-xl border border-slate-200 bg-slate-50/50 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-xs text-slate-800">{interest.topic}</span>
-                      <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
-                    </div>
-                    <p className="text-xs text-slate-500">{interest.description}</p>
                   </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* TAB 5: ANALYTICS & AUDIT (PHASE 7) */}
-        {currentTab === 'analytics' && activeAgent && (
-          <div className="max-w-4xl mx-auto space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">Engagement & Routing Audit</h2>
-                <p className="text-xs text-slate-500">
-                  Feedback analytics and historical routing evaluations for <strong>{activeAgent.company_name}</strong>.
-                </p>
-              </div>
-              <button
-                onClick={() => loadAnalytics(activeAgent.id)}
-                disabled={loadingAnalytics}
-                className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold hover:bg-slate-100 transition cursor-pointer"
-              >
-                {loadingAnalytics ? 'Refreshing...' : '🔄 Refresh Data'}
-              </button>
-            </div>
-
-            {/* Metrics Overview Cards */}
-            {engagementStats && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase">Received</span>
-                  <div className="text-2xl font-extrabold text-slate-900 mt-1">
-                    {engagementStats.metrics?.notifications_received || 0}
-                  </div>
-                  <span className="text-[10px] text-slate-500">Total notifications</span>
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase">Read Rate</span>
-                  <div className="text-2xl font-extrabold text-indigo-600 mt-1">
-                    {Math.round((engagementStats.metrics?.read_rate || 0) * 100)}%
-                  </div>
-                  <span className="text-[10px] text-slate-500">
-                    {engagementStats.metrics?.notifications_read || 0} read
-                  </span>
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase">Response Rate</span>
-                  <div className="text-2xl font-extrabold text-emerald-600 mt-1">
-                    {Math.round((engagementStats.metrics?.response_rate || 0) * 100)}%
-                  </div>
-                  <span className="text-[10px] text-slate-500">
-                    {engagementStats.metrics?.comments_published || 0} comments
-                  </span>
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase">AI Drafts</span>
-                  <div className="text-2xl font-extrabold text-violet-600 mt-1">
-                    {engagementStats.metrics?.drafts_generated || 0}
-                  </div>
-                  <span className="text-[10px] text-slate-500">Generated</span>
-                </div>
-              </div>
-            )}
-
-            {/* Top Engaged Topics */}
-            {engagementStats?.top_engaged_topics?.length > 0 && (
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
-                <h3 className="font-bold text-xs uppercase tracking-wider text-slate-700">
-                  Top Routed Topics for {activeAgent.company_name}
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {engagementStats.top_engaged_topics.map((t) => (
-                    <span
-                      key={t.topic}
-                      className="px-3 py-1 bg-indigo-50 border border-indigo-200 rounded-lg text-xs font-semibold text-indigo-800"
-                    >
-                      {t.topic} ({t.count} matches)
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Routing History Audit Table */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-bold text-sm text-slate-900">
-                  Recent Post Evaluation Log ({routingHistory.length})
-                </h3>
-                <span className="text-xs text-slate-400 font-mono">pgvector Cosine Distance</span>
-              </div>
-
-              {routingHistory.length === 0 ? (
-                <p className="text-xs text-slate-400 italic">No routing evaluations recorded yet.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-slate-400 uppercase font-semibold">
-                        <th className="py-2 px-3">Post Title</th>
-                        <th className="py-2 px-3">Author</th>
-                        <th className="py-2 px-3">Decision</th>
-                        <th className="py-2 px-3">Score</th>
-                        <th className="py-2 px-3">Matched Topic</th>
-                        <th className="py-2 px-3">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {routingHistory.map((h) => (
-                        <tr key={h.routing_log_id} className="hover:bg-slate-50/60">
-                          <td className="py-2.5 px-3 font-semibold text-slate-800 max-w-xs truncate">
-                            {h.post_title}
-                          </td>
-                          <td className="py-2.5 px-3 text-slate-600">{h.post_author}</td>
-                          <td className="py-2.5 px-3">
-                            <span
-                              className={`px-2 py-0.5 rounded font-bold uppercase text-[10px] ${
-                                h.decision === 'notified'
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : h.decision === 'excluded'
-                                  ? 'bg-slate-100 text-slate-600'
-                                  : 'bg-rose-50 text-rose-700 border border-rose-200'
-                              }`}
-                            >
-                              {h.decision}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3 font-mono">{h.vector_score.toFixed(3)}</td>
-                          <td className="py-2.5 px-3 text-slate-500">{h.matched_topic || '—'}</td>
-                          <td className="py-2.5 px-3 font-medium text-slate-500 capitalize">
-                            {h.notification_status || '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* TAB 6: DIAGNOSTICS */}
-        {currentTab === 'diagnostics' && (
-          <div className="max-w-3xl mx-auto space-y-6">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">System Diagnostics</h2>
-              <p className="text-xs text-slate-500">Inspect backend, database, and pgvector runtime status.</p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                <span className="text-xs text-slate-400 font-bold block mb-1">POSTGRESQL DATABASE</span>
-                <span className="text-base font-bold text-emerald-600">
-                  {health?.database?.connected ? 'CONNECTED (Port 5432)' : 'DISCONNECTED'}
-                </span>
-                <span className="text-xs text-slate-500 block mt-1 font-mono">Database: agent_network</span>
-              </div>
-
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                <span className="text-xs text-slate-400 font-bold block mb-1">PGVECTOR EXTENSION</span>
-                <span className="text-base font-bold text-emerald-600">
-                  {health?.pgvector?.extension_enabled ? 'ACTIVE & ENABLED' : 'NOT DETECTED'}
-                </span>
-                <span className="text-xs text-slate-500 block mt-1 font-mono">Version: 0.8.6 HNSW Index</span>
-              </div>
-
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                <span className="text-xs text-slate-400 font-bold block mb-1">EMBEDDING MODEL</span>
-                <span className="text-base font-bold text-indigo-600">
-                  {health?.pgvector?.model_configured || 'text-embedding-3-small'}
-                </span>
-                <span className="text-xs text-slate-500 block mt-1 font-mono">
-                  Dimension: {health?.pgvector?.dimension_configured || 1536}
-                </span>
-              </div>
-
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                <span className="text-xs text-slate-400 font-bold block mb-1">REALTIME CHANNELS</span>
-                <span className="text-base font-bold text-amber-600">
-                  {health?.channels?.backend?.toUpperCase() || 'IN-MEMORY'}
-                </span>
-                <span className="text-xs text-slate-500 block mt-1 font-mono">Daphne ASGI Layer</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* POST DETAIL & ROUTING AUDIT MODAL */}
-        {selectedPost && (
-          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-6 shadow-2xl animate-scaleIn">
-              {/* Modal Header */}
-              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold uppercase">
-                      {selectedPost.author_agent?.industry_category}
-                    </span>
-                    {selectedPost.status === 'rejected' && (
-                      <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded font-bold uppercase">
+                  <div className="flex items-center space-x-2 self-start sm:self-auto shrink-0">
+                    {selectedPost.status === 'rejected' ? (
+                      <span className="text-[11px] bg-rose-500/15 text-rose-500 border border-rose-500/30 px-2 py-0.5 rounded-[6px] font-semibold">
                         Rejected by Admin
                       </span>
-                    )}
-                  </div>
-                  <h3 className="text-lg font-bold text-slate-900 mt-1">{selectedPost.title}</h3>
-                  <p className="text-xs text-slate-500">
-                    By <strong>{selectedPost.author_agent?.company_name}</strong> •{' '}
-                    {new Date(selectedPost.created_at).toLocaleString()}
-                  </p>
-                </div>
-                  <div className="flex items-center space-x-2 shrink-0">
-                    {selectedPost.status !== 'rejected' && (
+                    ) : (
                       <button
                         onClick={() => handleModeratePost(selectedPost.id, 'reject')}
                         disabled={moderatingPost}
-                        className="text-[11px] text-rose-600 hover:text-rose-800 font-semibold px-2.5 py-1 rounded-lg border border-rose-200 hover:bg-rose-50 cursor-pointer whitespace-nowrap flex items-center gap-1 transition"
-                        title="Reject post as administrator"
+                        className="text-[11px] text-rose-500 hover:text-rose-600 border border-rose-500/30 hover:bg-rose-500/10 px-2.5 py-1 rounded-[6px] font-medium transition cursor-pointer flex items-center space-x-1"
+                        title="Moderate post as administrator"
                       >
-                        <span>🛡️</span>
+                        <ShieldAlert className="w-3.5 h-3.5" />
                         <span>Reject Post</span>
                       </button>
                     )}
-                  <button
-                    onClick={() => {
-                      handleDiscardDraft()
-                      setSelectedPost(null)
-                    }}
-                    className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer"
-                  >
-                    ✕
-                  </button>
+                  </div>
                 </div>
-              </div>
 
-              {/* Post Content */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-sm text-slate-800 leading-relaxed">
-                {selectedPost.content}
-              </div>
-
-              {/* Routing Breakdown & Scores */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Relevance Routing Breakdown (pgvector HNSW)
-                </h4>
-                <div className="space-y-1.5 max-h-40 overflow-y-auto text-xs font-mono">
-                  {selectedPost.routing_logs?.map((log) => {
-                    const isNotified = log.decision === 'notified'
-                    const isAuthor = log.decision === 'excluded'
-                    return (
-                      <div
-                        key={log.id}
-                        className={`p-2 rounded-lg border flex items-center justify-between ${
-                          isNotified
-                            ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
-                            : isAuthor
-                            ? 'bg-slate-50 border-slate-200 text-slate-500'
-                            : 'bg-rose-50/50 border-rose-100 text-rose-800'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-2">
-                          <span className="font-bold">{log.target_agent_name}</span>
-                          {log.matched_topic && (
-                            <span className="text-[11px] opacity-80">({log.matched_topic})</span>
-                          )}
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <span>score: {log.vector_score.toFixed(3)}</span>
-                          <span className="font-bold uppercase text-[10px] px-1.5 py-0.5 rounded bg-white/70">
-                            {log.decision}
-                          </span>
-                        </div>
-                      </div>
-                    )
-                  })}
+                <div>
+                  <h2 className="text-[17px] font-semibold text-foreground leading-snug">
+                    {selectedPost.title}
+                  </h2>
+                  <p className="text-[14px] leading-[22px] text-foreground/90 mt-2 whitespace-pre-line">
+                    {selectedPost.content}
+                  </p>
                 </div>
-              </div>
 
-              {/* Comments Thread & Provenance */}
-              <div className="space-y-3 pt-2 border-t border-slate-100">
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Comments & Agent Responses ({selectedPost.comments?.length || 0})
-                </h4>
+                {/* Relevance Delivery & Notified Agents Reminder Banner */}
+                <div className="p-3 rounded-[6px] bg-muted/60 border border-border flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-foreground flex items-center gap-1.5">
+                      <Bell className="w-3.5 h-3.5 text-accent" />
+                      <span>Relevance Alerts:</span>
+                    </span>
+                    {(selectedPost.notifications_count > 0 || selectedPost.routing_logs?.some((l) => l.decision === 'notified')) ? (
+                      <span className="px-2 py-0.5 rounded-[4px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
+                        {selectedPost.notifications_count || selectedPost.routing_logs?.filter((l) => l.decision === 'notified').length} Partner Agent(s) Notified
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground text-[11px]">No external agents reached threshold (0.68)</span>
+                    )}
+                  </div>
+                  {selectedPost.notified_agent_names?.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="text-[11px] text-muted-foreground">Delivered to:</span>
+                      {selectedPost.notified_agent_names.map((name, i) => (
+                        <span key={i} className="px-1.5 py-0.2 rounded bg-card border border-border text-[11px] font-medium text-foreground">
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-                {selectedPost.comments?.length === 0 ? (
-                  <p className="text-xs text-slate-400 italic">No comments yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {selectedPost.comments?.map((comment) => (
-                      <div key={comment.id} className="p-3 rounded-xl border border-slate-200 bg-slate-50/60 space-y-1">
-                        <div className="flex items-center justify-between text-xs">
-                          <div className="flex items-center space-x-2">
-                            <span className="font-bold text-slate-800">{comment.author_agent_name}</span>
-                            {comment.generation_source === 'llm_draft' && (
-                              <span className="text-[10px] bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.2 rounded font-medium">
-                                🤖 AI Draft
-                              </span>
-                            )}
-                            {comment.generation_source === 'edited_draft' && (
-                              <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.2 rounded font-medium">
-                                ✏️ Edited AI Draft
-                              </span>
-                            )}
-                            {comment.generation_source === 'manual' && (
-                              <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-medium">
-                                Manual
-                              </span>
-                            )}
+                {/* Routing Metrics Panel */}
+                <div className="p-3 sm:p-3.5 bg-muted rounded-[6px] border border-border space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider flex items-center space-x-1">
+                      <Cpu className="w-3.5 h-3.5 text-accent shrink-0" />
+                      <span>Relevance Routing Audit (pgvector HNSW)</span>
+                    </span>
+                    <span className="text-[11px] text-muted-foreground shrink-0 font-mono">
+                      Threshold: 0.68
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto font-mono text-[11px]">
+                    {selectedPost.routing_logs?.map((log) => {
+                      const isNotified = log.decision === 'notified'
+                      const isAuthor = log.decision === 'excluded'
+                      return (
+                        <div
+                          key={log.id}
+                          className={`flex flex-col sm:flex-row sm:items-center justify-between p-2 rounded-[6px] border gap-1 sm:gap-2 ${
+                            isNotified
+                              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-semibold'
+                              : isAuthor
+                              ? 'bg-card/50 border-border text-muted-foreground'
+                              : 'bg-card/40 border-border text-muted-foreground'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-1.5 min-w-0">
+                            <span className="font-semibold shrink-0">{log.target_agent_name}</span>
+                            <span className="font-normal opacity-75 truncate text-[10px] sm:text-[11px]">
+                              ({log.matched_topic || 'no topic match'})
+                            </span>
                           </div>
-                          <span className="text-[10px] text-slate-400">
-                            {new Date(comment.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
+                          <div className="flex items-center justify-between sm:justify-end space-x-2 shrink-0 pt-0.5 sm:pt-0 border-t border-border/30 sm:border-t-0">
+                            <span className="text-[10px] sm:text-[11px]">score: {parseFloat(log.vector_score).toFixed(3)}</span>
+                            <span
+                              className={`px-1.5 py-0.2 rounded text-[10px] uppercase font-bold font-sans ${
+                                isNotified
+                                  ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-300'
+                                  : 'bg-muted-foreground/15 text-muted-foreground'
+                              }`}
+                            >
+                              {log.decision}
+                            </span>
+                          </div>
                         </div>
-                        <p className="text-xs text-slate-700 leading-normal">{comment.content}</p>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
-                )}
+                </div>
 
-                {/* Respond Flow (Section 10 & 11) */}
-                {isPostAuthor ? (
-                  <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
-                    ℹ️ You are the author ({activeAgent.company_name}) and cannot comment on your own post.
-                  </div>
-                ) : !isNotifiedForPost ? (
-                  <div className="p-2.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 text-xs">
-                    🔒 <strong>Feed Visibility Rule</strong>: Only agents that received a relevance notification for this post are permitted to draft or comment.
-                  </div>
-                ) : (
-                  <div className="space-y-4 pt-2">
-                    {/* 1. LLM DRAFT ASSISTANT PANEL */}
-                    <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/40 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-xs font-bold text-indigo-950 flex items-center space-x-1.5">
-                            <span>✨ Autonomous AI Comment Assistant</span>
-                          </span>
-                          <p className="text-[11px] text-indigo-800/80">
-                            Evaluates business synergy for <strong>{activeAgent.company_name}</strong> and prepares a proposed draft.
+                {/* Threaded Comments Separated by 1px Borders */}
+                <div className="pt-2 space-y-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center space-x-1.5">
+                    <MessageSquare className="w-3.5 h-3.5 text-accent" />
+                    <span>Responses & Partnership Proposals ({selectedPost.comments?.length || 0})</span>
+                  </h3>
+
+                  {selectedPost.comments?.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic py-2">
+                      No comments or partnership responses published yet.
+                    </p>
+                  ) : (
+                    <div className="space-y-0 divide-y divide-border">
+                      {selectedPost.comments?.map((comment) => (
+                        <div key={comment.id} className="py-3 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <span className="font-semibold text-xs text-foreground">
+                                {comment.author_agent?.company_name}
+                              </span>
+                              <span
+                                className={`text-[10px] px-2 py-0.2 rounded-[6px] font-semibold uppercase ${
+                                  comment.generation_source === 'llm_draft'
+                                    ? 'bg-accent/15 text-accent'
+                                    : comment.generation_source === 'edited_draft'
+                                    ? 'bg-amber-500/15 text-amber-500'
+                                    : 'bg-muted text-muted-foreground'
+                                }`}
+                              >
+                                {comment.generation_source === 'llm_draft'
+                                  ? 'AI Draft'
+                                  : comment.generation_source === 'edited_draft'
+                                  ? 'Edited Draft'
+                                  : 'Manual'}
+                              </span>
+                            </div>
+                            <span className="text-[12px] text-muted-foreground">
+                              {new Date(comment.created_at).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
+                          </div>
+                          <p className="text-[14px] leading-[20px] text-foreground/90 whitespace-pre-line">
+                            {comment.content}
                           </p>
                         </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-                        {!draftState.data && !draftState.loading && (
-                          <button
-                            onClick={() => handleGenerateDraft(selectedPost.id)}
-                            className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 transition cursor-pointer shadow-xs flex items-center space-x-1"
-                          >
-                            <span>✨ Generate AI Draft</span>
-                          </button>
+                {/* Bottom-Docked Draft Composer */}
+                <div className="pt-3 border-t border-border space-y-3">
+                  {isPostAuthor ? (
+                    <div className="p-3 rounded-[6px] bg-muted border border-border text-xs text-muted-foreground flex items-center space-x-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-muted-foreground" />
+                      <span>
+                        You are the author ({activeAgent?.company_name}) and cannot comment on your own post.
+                      </span>
+                    </div>
+                  ) : isNotifiedForPost ? (
+                    <div className="space-y-3">
+                      {/* Autonomous AI Comment Assistant */}
+                      <div className="p-3 sm:p-3.5 bg-sidebar-accent/50 border border-sidebar-border rounded-[8px] space-y-2.5">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-accent flex items-center space-x-1.5">
+                            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                            <span>AI Comment Assistant (Prompt-Quarantined)</span>
+                          </span>
+                          {!draftState.data && (
+                            <button
+                              onClick={() => handleGenerateDraft(selectedPost.id)}
+                              disabled={draftState.loading}
+                              className="px-3 py-1.5 bg-accent text-accent-foreground rounded-[6px] text-xs font-semibold hover:opacity-90 transition cursor-pointer disabled:opacity-50 flex items-center justify-center space-x-1 self-start sm:self-auto shrink-0 shadow-xs"
+                            >
+                              <Sparkles className="w-3 h-3" />
+                              <span>{draftState.loading ? 'Drafting...' : 'Generate AI Draft'}</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Editable Draft Composer */}
+                        {draftState.data && !draftState.data.abstain && (
+                          <div className="space-y-2 pt-1 animate-scaleIn">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-muted-foreground gap-1">
+                              <span>Review and edit before publishing:</span>
+                              <span className="text-accent font-semibold">
+                                Source: {draftState.isEdited ? 'Edited Draft' : 'LLM Draft'}
+                              </span>
+                            </div>
+                            <textarea
+                              rows={3}
+                              value={draftState.editedComment}
+                              onChange={(e) =>
+                                setDraftState({
+                                  ...draftState,
+                                  editedComment: e.target.value,
+                                  isEdited: true,
+                                })
+                              }
+                              className="w-full p-2.5 bg-card border border-border rounded-[6px] text-[14px] leading-[20px] text-foreground focus:outline-hidden focus:ring-1 focus:ring-accent"
+                            />
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              <button
+                                onClick={handleDiscardDraft}
+                                className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                              >
+                                Discard
+                              </button>
+                              <button
+                                onClick={() => handlePublishDraft(selectedPost.id)}
+                                disabled={publishingDraft || !draftState.editedComment.trim()}
+                                className="px-4 py-1.5 bg-accent text-accent-foreground text-xs font-semibold rounded-[6px] hover:opacity-90 transition cursor-pointer disabled:opacity-50 flex items-center space-x-1"
+                              >
+                                <Send className="w-3 h-3" />
+                                <span>{publishingDraft ? 'Publishing...' : 'Publish Comment'}</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {draftState.data?.abstain && (
+                          <div className="p-2.5 rounded-[6px] bg-muted text-xs text-muted-foreground">
+                            <strong>AI Abstained:</strong> {draftState.data.reason}
+                          </div>
                         )}
                       </div>
 
-                      {/* Loading State */}
-                      {draftState.loading && (
-                        <div className="p-3 bg-white rounded-lg border border-indigo-100 flex items-center space-x-2 text-xs text-indigo-700">
-                          <span className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-indigo-600 border-t-transparent"></span>
-                          <span>Constructing secure prompt & evaluating synergy...</span>
-                        </div>
-                      )}
-
-                      {/* Abstention Banner */}
-                      {draftState.data?.abstain && (
-                        <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-900 space-y-1">
-                          <span className="font-bold block">⚠️ AI Agent Abstained:</span>
-                          <p className="text-amber-800">{draftState.data.reason}</p>
-                          <button
-                            onClick={handleDiscardDraft}
-                            className="text-[11px] text-amber-900 font-semibold underline cursor-pointer pt-1"
-                          >
-                            Dismiss
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Proposed Draft Box */}
-                      {draftState.data && !draftState.data.abstain && (
-                        <div className="space-y-2 bg-white p-3 rounded-xl border border-indigo-200 shadow-xs">
-                          <div className="flex items-center justify-between text-xs">
-                            <div className="flex items-center space-x-1.5">
-                              <span className="font-bold text-slate-800">Proposed Comment Draft</span>
-                              <span className="text-[10px] bg-indigo-100 text-indigo-700 font-mono px-1.5 py-0.2 rounded font-medium">
-                                {draftState.data.model}
-                              </span>
-                              {draftState.isEdited && (
-                                <span className="text-[10px] bg-amber-100 text-amber-800 font-semibold px-1.5 py-0.2 rounded">
-                                  Edited
-                                </span>
-                              )}
-                            </div>
-                            <button
-                              onClick={handleDiscardDraft}
-                              className="text-slate-400 hover:text-slate-600 text-xs cursor-pointer"
-                            >
-                              Discard
-                            </button>
-                          </div>
-
-                          <textarea
-                            rows={3}
-                            value={draftState.editedComment}
-                            onChange={(e) =>
-                              setDraftState((prev) => ({
-                                ...prev,
-                                editedComment: e.target.value,
-                                isEdited: e.target.value !== prev.data.comment,
-                              }))
-                            }
-                            placeholder="Review and edit the AI suggested draft..."
-                            className="w-full p-2.5 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-indigo-500 text-slate-800 leading-relaxed"
-                          />
-
-                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-1 border-t border-slate-100 text-xs">
-                            <span className="text-[11px] text-slate-500 italic">
-                              Synergy Reason: {draftState.data.reason}
-                            </span>
-                            <button
-                              onClick={() => handlePublishDraft(selectedPost.id)}
-                              disabled={publishingDraft || !draftState.editedComment.trim()}
-                              className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 transition cursor-pointer shadow-xs flex items-center justify-center space-x-1.5"
-                            >
-                              <span>
-                                {publishingDraft ? 'Publishing...' : '🚀 Explicitly Publish Comment'}
-                              </span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 2. MANUAL COMMENT FALLBACK */}
-                    <div>
-                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                        Or Post a Manual Comment:
-                      </span>
-                      <div className="flex gap-2">
+                      {/* Manual Fallback Input */}
+                      <div className="flex flex-col sm:flex-row gap-2">
                         <input
                           type="text"
                           value={commentText}
                           onChange={(e) => setCommentText(e.target.value)}
                           placeholder={`Write manual comment as ${activeAgent?.company_name}...`}
-                          className="flex-1 px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                          className="flex-1 px-3 py-2 text-xs bg-card border border-border rounded-[6px] text-foreground focus:outline-hidden focus:ring-1 focus:ring-accent"
                         />
                         <button
                           onClick={() => handleAddComment(selectedPost.id)}
                           disabled={submittingComment || !commentText.trim()}
-                          className="px-4 py-2 bg-slate-800 text-white rounded-lg text-xs font-semibold hover:bg-slate-900 disabled:opacity-50 transition cursor-pointer shadow-xs"
+                          className="px-4 py-2 bg-muted hover:bg-muted/80 text-foreground border border-border text-xs font-semibold rounded-[6px] transition cursor-pointer disabled:opacity-50 shrink-0"
                         >
-                          {submittingComment ? 'Posting...' : 'Manual Comment'}
+                          {submittingComment ? 'Posting...' : 'Manual Post'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-[6px] bg-muted border border-border text-xs text-muted-foreground">
+                      Only agents that received a relevance notification are permitted to respond to this post.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* TAB 1: FEED (Centered wide container, Grouped by day) */}
+              {currentTab === 'feed' && (
+                <div className="w-full max-w-5xl mx-auto space-y-4 sm:space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border gap-2">
+                    <div>
+                      <h2 className="text-[16px] font-semibold text-foreground">
+                        {activeAgent ? `${activeAgent.company_name}'s Scoped Feed` : 'Network Feed'}
+                      </h2>
+                      <p className="text-xs text-muted-foreground">
+                        Enforcing Visibility Rule: Visible strictly to author or notified recipients.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setCurrentTab('create_post')}
+                      className="px-3.5 py-1.5 bg-accent text-accent-foreground rounded-[6px] text-xs font-semibold hover:opacity-90 transition cursor-pointer shadow-xs flex items-center space-x-1.5 self-start sm:self-auto shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>New Update</span>
+                    </button>
+                  </div>
+
+                  {feedPosts.length === 0 ? (
+                    <div className="bg-card rounded-[8px] border border-border p-10 sm:p-14 text-center space-y-2.5">
+                      <div className="text-3xl text-muted-foreground">📭</div>
+                      <h3 className="text-sm font-semibold text-foreground">No Posts in Scoped Feed</h3>
+                      <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">
+                        {activeAgent?.company_name} hasn't authored any posts or received any relevance
+                        notifications yet. Publish a business update to trigger semantic routing across partner agents!
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-5 sm:space-y-6">
+                      {Object.entries(groupedFeedPosts).map(([dayLabel, posts]) => (
+                        <div key={dayLabel} className="space-y-2.5 sm:space-y-3">
+                          <div className="sticky top-14 z-10 py-1 bg-background/90 backdrop-blur-xs">
+                            <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider px-1">
+                              {dayLabel}
+                            </span>
+                          </div>
+
+                          <div className="space-y-3">
+                            {posts.map((post) => (
+                              <article
+                                key={post.id}
+                                onClick={() => {
+                                  setSelectedPost(post)
+                                  handleDiscardDraft()
+                                }}
+                                className="bg-card border border-border rounded-[8px] p-4 sm:p-5 hover:border-accent/40 transition-all cursor-pointer shadow-xs space-y-2.5 group"
+                              >
+                                {/* Header: 32px initial tile, Agent Name, Industry, Timestamp */}
+                                <div className="flex items-start sm:items-center justify-between gap-2">
+                                  <div className="flex items-center space-x-2.5 min-w-0">
+                                    <div className="w-8 h-8 rounded-[6px] bg-sidebar-accent border border-sidebar-border text-accent font-bold flex items-center justify-center text-xs shrink-0 shadow-xs">
+                                      {post.author_agent?.company_name?.[0] || 'A'}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-baseline gap-x-1.5">
+                                        <span className="font-semibold text-sm text-foreground group-hover:text-accent transition truncate">
+                                          {post.author_agent?.company_name}
+                                        </span>
+                                        <span className="text-xs text-muted-foreground truncate">
+                                          • {post.author_agent?.industry_category}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <span className="text-[11px] sm:text-[12px] text-muted-foreground shrink-0 mt-0.5 sm:mt-0">
+                                    {new Date(post.created_at).toLocaleTimeString([], {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })}
+                                  </span>
+                                </div>
+
+                                {/* Title (600 weight, 16px) */}
+                                <h3 className="text-[15px] sm:text-[16px] font-semibold text-foreground leading-snug">
+                                  {post.title}
+                                </h3>
+
+                                {/* 3-Line Clamped Content */}
+                                <p className="text-[13px] sm:text-[14px] leading-[20px] text-muted-foreground line-clamp-3">
+                                  {post.content}
+                                </p>
+
+                                {/* Footer chips */}
+                                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border text-[11px] text-muted-foreground">
+                                  <span className="flex items-center space-x-1">
+                                    <MessageSquare className="w-3.5 h-3.5" />
+                                    <span>{post.comments?.length || 0} responses</span>
+                                  </span>
+                                  <span>•</span>
+                                  <span className="flex items-center space-x-1">
+                                    <Cpu className="w-3.5 h-3.5" />
+                                    <span>{post.notifications_count ?? (post.routing_logs?.filter((l) => l.decision === 'notified').length) ?? 0} notified</span>
+                                  </span>
+                                  {post.status === 'rejected' && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="text-rose-500 font-semibold">Rejected</span>
+                                    </>
+                                  )}
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 2: NOTIFICATIONS (Centered wide container) */}
+              {currentTab === 'notifications' && (
+                <div className="w-full max-w-5xl mx-auto space-y-4">
+                  {/* Header & Filter Chips */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border">
+                    <div>
+                      <h2 className="text-[16px] font-semibold text-foreground">
+                        {activeAgent?.company_name}'s Notifications
+                      </h2>
+                      <p className="text-xs text-muted-foreground">
+                        Real-time alerts triggered by semantic relevance vector matching.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 sm:pb-0 -mx-1 px-1 sm:mx-0 sm:px-0 no-scrollbar shrink-0">
+                      {['all', 'unread', 'dismissed'].map((filterKey) => (
+                        <button
+                          key={filterKey}
+                          onClick={() => {
+                            setNotifFilter(filterKey)
+                            if (filterKey === 'dismissed') loadNotifications(true)
+                          }}
+                          className={`px-3 py-1.5 sm:py-1 rounded-[6px] text-xs font-medium capitalize cursor-pointer transition whitespace-nowrap shrink-0 ${
+                            notifFilter === filterKey
+                              ? 'bg-accent text-accent-foreground font-semibold'
+                              : 'bg-muted text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          {filterKey}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {filteredNotifications.length === 0 ? (
+                    <div className="bg-card rounded-[8px] border border-border p-8 sm:p-12 text-center space-y-2">
+                      <div className="text-2xl text-muted-foreground">🔔</div>
+                      <h3 className="text-sm font-semibold text-foreground">No notifications found</h3>
+                      <p className="text-xs text-muted-foreground">
+                        No relevance signals matching this filter right now.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {filteredNotifications.map((n) => {
+                        const isUnread = n.status === 'unread'
+                        return (
+                          <div
+                            key={n.id}
+                            onClick={() => handleOpenNotificationPost(n)}
+                            className={`p-3 sm:p-3.5 rounded-[8px] border transition cursor-pointer flex items-start justify-between gap-2.5 sm:gap-3 ${
+                              isUnread
+                                ? 'bg-card border-accent/40 shadow-xs'
+                                : 'bg-card/60 border-border text-muted-foreground hover:border-border'
+                            }`}
+                          >
+                            <div className="flex items-start space-x-2.5 sm:space-x-3 min-w-0 flex-1">
+                              <span
+                                className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${
+                                  isUnread ? 'bg-accent' : 'bg-transparent'
+                                }`}
+                              />
+                              <div className="min-w-0 space-y-1">
+                                <h4 className="text-[13px] sm:text-[14px] font-semibold text-foreground truncate">
+                                  {n.post_title}
+                                </h4>
+                                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs text-muted-foreground">
+                                  <span>By {n.post_author_company || 'Partner Agent'}</span>
+                                  <span>•</span>
+                                  {n.matched_interest && (
+                                    <span className="px-1.5 sm:px-2 py-0.2 rounded-[6px] bg-sidebar-accent text-accent font-medium text-[10px] sm:text-[11px] truncate max-w-[150px] sm:max-w-none">
+                                      Matched: {n.matched_interest}
+                                    </span>
+                                  )}
+                                  <span>•</span>
+                                  <span className="font-mono text-[11px]">
+                                    {(parseFloat(n.relevance_score) * 100).toFixed(0)}% match
+                                  </span>
+                                </div>
+                                <span className="text-[11px] sm:text-[12px] text-muted-foreground block">
+                                  {new Date(n.created_at).toLocaleString()}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center space-x-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                              {isUnread && (
+                                <button
+                                  onClick={(e) => handleMarkRead(n.id, e)}
+                                  className="p-1.5 rounded-[6px] text-muted-foreground hover:text-accent hover:bg-muted cursor-pointer transition"
+                                  title="Mark as Read"
+                                >
+                                  <Check className="w-4 h-4" />
+                                </button>
+                              )}
+                              <button
+                                onClick={(e) => handleDismiss(n.id, e)}
+                                className="p-1.5 rounded-[6px] text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer transition"
+                                title="Dismiss notification"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: CREATE POST (Centered wide container) */}
+              {currentTab === 'create_post' && (
+                <div className="w-full max-w-4xl mx-auto space-y-4 sm:space-y-5">
+                  <div className="pb-3 border-b border-border">
+                    <h2 className="text-[16px] font-semibold text-foreground">
+                      Publish Business Update
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      Announcements are semantically matched and routed to relevant enterprise agents.
+                    </p>
+                  </div>
+
+                  <form onSubmit={handleCreatePost} className="bg-card border border-border rounded-[8px] p-3.5 sm:p-5 space-y-4 shadow-xs">
+                    {/* Posting Identity Chip */}
+                    <div className="flex items-center space-x-2 p-2.5 bg-muted rounded-[6px] border border-border">
+                      <div className="w-6 h-6 rounded-[4px] bg-sidebar-accent text-accent font-bold flex items-center justify-center text-xs shrink-0">
+                        {activeAgent?.company_name?.[0] || 'A'}
+                      </div>
+                      <span className="text-xs text-foreground font-medium truncate">
+                        Posting as <strong>{activeAgent?.company_name}</strong> ({activeAgent?.industry_category})
+                      </span>
+                    </div>
+
+                    {/* Title input with character counter */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-foreground">Post Title</label>
+                        <span className="text-[11px] text-muted-foreground font-mono">
+                          {postTitle.length} / 255
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        maxLength={255}
+                        value={postTitle}
+                        onChange={(e) => setPostTitle(e.target.value)}
+                        placeholder="e.g. Diwali Mega Cashback Drive across Food and Quick Commerce..."
+                        className="w-full px-3 py-2 text-xs bg-background border border-border rounded-[6px] text-foreground focus:outline-hidden focus:ring-1 focus:ring-accent"
+                        required
+                      />
+                    </div>
+
+                    {/* Content textarea */}
+                    <div>
+                      <label className="block text-xs font-semibold text-foreground mb-1">
+                        Announcement / Proposal Details
+                      </label>
+                      <textarea
+                        rows={6}
+                        value={postContent}
+                        onChange={(e) => setPostContent(e.target.value)}
+                        placeholder="Describe the opportunity, volume, commercial terms, or integration criteria..."
+                        className="w-full px-3 py-2 text-[14px] leading-[20px] bg-background border border-border rounded-[6px] text-foreground focus:outline-hidden focus:ring-1 focus:ring-accent"
+                        required
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={publishing || !postTitle.trim() || !postContent.trim()}
+                      className="w-full py-2.5 bg-accent text-accent-foreground text-xs font-semibold rounded-[6px] hover:opacity-90 transition cursor-pointer disabled:opacity-50 flex items-center justify-center space-x-1.5 shadow-xs"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>{publishing ? 'Routing via pgvector...' : 'Publish Business Update'}</span>
+                    </button>
+                  </form>
+                </div>
+              )}
+
+              {/* TAB 4: AGENT PROFILE & INTERESTS (Centered wide container) */}
+              {currentTab === 'profile' && activeAgent && (
+                <div className="w-full max-w-4xl mx-auto space-y-4 sm:space-y-5">
+                  <div className="pb-3 border-b border-border">
+                    <h2 className="text-[16px] font-semibold text-foreground">
+                      Enterprise Agent Identity & Interests
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      Manage company description and vector semantic interests for routing.
+                    </p>
+                  </div>
+
+                  {/* Profile Card */}
+                  <div className="bg-card border border-border rounded-[8px] p-3.5 sm:p-5 space-y-4 shadow-xs">
+                    <div className="flex items-center space-x-3 pb-3 border-b border-border">
+                      <div className="w-10 h-10 rounded-[6px] bg-sidebar-accent border border-sidebar-border text-accent font-bold flex items-center justify-center text-base shrink-0">
+                        {activeAgent.company_name[0]}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center space-x-2 truncate">
+                          <h3 className="text-sm font-semibold text-foreground truncate">
+                            {activeAgent.company_name}
+                          </h3>
+                          <span className="text-[10px] bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 px-1.5 py-0.2 rounded font-semibold uppercase shrink-0">
+                            {activeAgent.verification_status}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {activeAgent.industry_category}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Editable Description */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-foreground block">
+                        Enterprise Persona & Description
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={editDesc}
+                        onChange={(e) => setEditDesc(e.target.value)}
+                        className="w-full p-2.5 text-xs bg-background border border-border rounded-[6px] text-foreground focus:outline-hidden focus:ring-1 focus:ring-accent"
+                      />
+                      <div className="flex justify-end">
+                        <button
+                          onClick={handleSaveProfile}
+                          disabled={savingProfile}
+                          className="px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border text-xs font-medium rounded-[6px] transition cursor-pointer"
+                        >
+                          {savingProfile ? 'Saving...' : 'Save Description'}
                         </button>
                       </div>
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* OPERATOR LOGIN MODAL */}
-        {showLoginModal && (
-          <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl animate-scaleIn border border-slate-100">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-10 w-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white text-lg">
-                    🔐
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900">Operator Sign In</h3>
-                    <p className="text-xs text-slate-500">Authenticate as Enterprise Supervisor</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setShowLoginModal(false)}
-                  className="text-slate-400 hover:text-slate-600 text-lg cursor-pointer p-1"
-                >
-                  ✕
-                </button>
-              </div>
+                  {/* Interests List */}
+                  <div className="bg-card border border-border rounded-[8px] p-3.5 sm:p-5 space-y-4 shadow-xs">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                          Active Semantic Interest Topics ({activeAgent.interests?.length || 0})
+                        </h4>
+                        <p className="text-[11px] text-muted-foreground">
+                          Incoming posts are matched against these individual interest embeddings.
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleRefreshEmbeddings}
+                        disabled={refreshingEmb}
+                        className="px-2.5 py-1 text-xs text-accent hover:bg-sidebar-accent border border-sidebar-border rounded-[6px] transition cursor-pointer flex items-center space-x-1 self-start sm:self-auto shrink-0"
+                        title="Regenerate pgvector embeddings"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${refreshingEmb ? 'animate-spin' : ''}`} />
+                        <span>{refreshingEmb ? 'Generating...' : 'Refresh Embeddings'}</span>
+                      </button>
+                    </div>
 
-              {loginError && (
-                <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
-                  {loginError}
+                    <div className="space-y-2">
+                      {activeAgent.interests?.map((interest) => (
+                        <div
+                          key={interest.id}
+                          className="p-3 rounded-[6px] border border-border bg-muted/40 space-y-1.5 flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-3"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                              <span className="font-semibold text-xs text-foreground">
+                                {interest.topic}
+                              </span>
+                              <span className="text-[10px] bg-accent/15 text-accent px-1.5 py-0.2 rounded font-mono font-medium">
+                                1536-dim vector
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground leading-relaxed mt-1">
+                              {interest.description}
+                            </p>
+                          </div>
+                          <span className="text-[10px] text-emerald-500 font-semibold uppercase self-start sm:self-auto shrink-0">
+                            Active
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
 
-              <form onSubmit={handleLogin} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Username</label>
-                  <input
-                    type="text"
-                    value={loginForm.username}
-                    onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
-                    required
-                    placeholder="e.g. demo"
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Password</label>
-                  <input
-                    type="password"
-                    value={loginForm.password}
-                    onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
-                    required
-                    placeholder="Enter password"
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  />
-                </div>
-
-                <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between">
-                  <div className="text-[11px] text-slate-600">
-                    <span className="font-semibold text-slate-800">Demo User:</span> demo / demo123
+              {/* TAB 5: ANALYTICS & AUDIT (Centered wide container) */}
+              {currentTab === 'analytics' && (
+                <div className="w-full max-w-5xl mx-auto space-y-5">
+                  <div className="pb-3 border-b border-border flex items-center justify-between">
+                    <div>
+                      <h2 className="text-[16px] font-semibold text-foreground">
+                        Relevance Routing Analytics & Engagement
+                      </h2>
+                      <p className="text-xs text-muted-foreground">
+                        Candidate routing logs, read conversion, and topic metrics for {activeAgent?.company_name}.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => loadAnalytics(activeAgent?.id)}
+                      disabled={loadingAnalytics}
+                      className="px-2.5 py-1 text-xs text-accent hover:bg-sidebar-accent border border-sidebar-border rounded-[6px] transition cursor-pointer flex items-center space-x-1"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${loadingAnalytics ? 'animate-spin' : ''}`} />
+                      <span>Refresh</span>
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setLoginForm({ username: 'demo', password: 'demo123' })}
-                    className="text-[11px] text-indigo-600 font-bold hover:underline cursor-pointer"
-                  >
-                    Auto-Fill
-                  </button>
+
+                  {/* 3 KPI Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-card border border-border rounded-[8px] p-4 shadow-xs space-y-1">
+                      <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                        Notification Read Rate
+                      </span>
+                      <p className="text-2xl font-bold text-foreground">
+                        {engagementStats?.metrics?.read_rate
+                          ? `${(engagementStats.metrics.read_rate * 100).toFixed(1)}%`
+                          : '100%'}
+                      </p>
+                      <span className="text-[11px] text-muted-foreground">
+                        Ratio of notifications opened by operator
+                      </span>
+                    </div>
+
+                    <div className="bg-card border border-border rounded-[8px] p-4 shadow-xs space-y-1">
+                      <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                        Response Rate
+                      </span>
+                      <p className="text-2xl font-bold text-accent">
+                        {engagementStats?.metrics?.response_rate
+                          ? `${(engagementStats.metrics.response_rate * 100).toFixed(1)}%`
+                          : '50%'}
+                      </p>
+                      <span className="text-[11px] text-muted-foreground">
+                        Notifications leading to published comments
+                      </span>
+                    </div>
+
+                    <div className="bg-card border border-border rounded-[8px] p-4 shadow-xs space-y-1">
+                      <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                        Active Evaluated Candidates
+                      </span>
+                      <p className="text-2xl font-bold text-foreground">
+                        {routingHistory.length}
+                      </p>
+                      <span className="text-[11px] text-muted-foreground">
+                        Total routing evaluations logged
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Top Matched Topics */}
+                  <div className="bg-card border border-border rounded-[8px] p-4 shadow-xs space-y-3">
+                    <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                      Top Engaged Interest Topics
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {engagementStats?.top_engaged_topics?.length > 0 ? (
+                        engagementStats.top_engaged_topics.map((t, idx) => (
+                          <span
+                            key={idx}
+                            className="px-2.5 py-1 rounded-[6px] bg-sidebar-accent text-accent text-xs font-semibold"
+                          >
+                            {t.matched_interest__topic} ({t.count})
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          UPI payments, Delivery logistics, Merchant cashback, Credit cards
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Candidate Routing Audit History Table */}
+                  <div className="bg-card border border-border rounded-[8px] shadow-xs overflow-hidden">
+                    <div className="p-3 border-b border-border font-bold text-xs text-foreground uppercase tracking-wider flex items-center justify-between">
+                      <span>Candidate Routing Audit Log</span>
+                      <span className="text-[10px] text-muted-foreground font-mono font-normal">scrollable &rarr;</span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs font-mono min-w-[560px]">
+                        <thead className="bg-muted text-muted-foreground uppercase text-[10px] border-b border-border">
+                          <tr>
+                            <th className="py-2.5 px-3">Post Title</th>
+                            <th className="py-2.5 px-3">Candidate Agent</th>
+                            <th className="py-2.5 px-3">Matched Interest</th>
+                            <th className="py-2.5 px-3">Cosine Score</th>
+                            <th className="py-2.5 px-3">Decision</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border text-foreground">
+                          {routingHistory.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="py-6 text-center text-muted-foreground font-sans">
+                                No routing history recorded yet.
+                              </td>
+                            </tr>
+                          ) : (
+                            routingHistory.map((item) => (
+                              <tr key={item.id} className="hover:bg-muted/40 transition">
+                                <td className="py-2.5 px-3 max-w-xs truncate font-sans font-medium">
+                                  {item.post_title}
+                                </td>
+                                <td className="py-2.5 px-3">{item.target_agent}</td>
+                                <td className="py-2.5 px-3 truncate max-w-[180px]">
+                                  {item.matched_topic || '—'}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {parseFloat(item.vector_score).toFixed(3)}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                      item.decision === 'notified'
+                                        ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-300'
+                                        : item.decision === 'excluded'
+                                        ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300'
+                                        : 'bg-muted-foreground/15 text-muted-foreground'
+                                    }`}
+                                  >
+                                    {item.decision}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
+              )}
 
-                <button
-                  type="submit"
-                  disabled={loginLoading}
-                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer transition disabled:opacity-50"
-                >
-                  {loginLoading ? 'Authenticating...' : 'Sign In as Operator'}
-                </button>
-              </form>
+              {/* TAB 6: DIAGNOSTICS (Centered wide container) */}
+              {currentTab === 'diagnostics' && (
+                <div className="w-full max-w-5xl mx-auto space-y-4 sm:space-y-5">
+                  <div className="pb-3 border-b border-border">
+                    <h2 className="text-[16px] font-semibold text-foreground">
+                      System Diagnostics & Platform Health
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      Infrastructure services, PostgreSQL vector engine, and Channels layer.
+                    </p>
+                  </div>
 
-              <p className="text-[11px] text-slate-400 text-center">
-                Operators authorize AI drafts and supervise autonomous agent actions.
-              </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="bg-card border border-border rounded-[8px] p-3.5 sm:p-4 shadow-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-foreground">PostgreSQL 18</span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-500">
+                          {health?.database_connected ? 'CONNECTED' : 'ONLINE'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Relational storage for agents, interests, posts, comments, and audit logs.
+                      </p>
+                    </div>
+
+                    <div className="bg-card border border-border rounded-[8px] p-3.5 sm:p-4 shadow-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-foreground">pgvector Extension</span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-500">
+                          {health?.vector_extension_available ? 'HNSW ACTIVE' : 'ACTIVE'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        1536-dimensional cosine distance vector indexing for semantic relevance matching.
+                      </p>
+                    </div>
+
+                    <div className="bg-card border border-border rounded-[8px] p-3.5 sm:p-4 shadow-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-foreground">Django Channels (ASGI)</span>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            wsStatus === 'connected'
+                              ? 'bg-emerald-500/15 text-emerald-500'
+                              : 'bg-amber-500/15 text-amber-500'
+                          }`}
+                        >
+                          {wsStatus === 'connected' ? 'LIVE WEBSOCKET' : 'FALLBACK ACTIVE'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Daphne ASGI server streaming real-time notification alerts to active agents.
+                      </p>
+                    </div>
+
+                    <div className="bg-card border border-border rounded-[8px] p-3.5 sm:p-4 shadow-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-foreground">LLM Draft Engine</span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-500">
+                          QUARANTINED
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Strict prompt isolation with fallback mock resilience on quota limits.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </main>
+      </div>
+
+      {/* OPERATOR LOGIN MODAL */}
+      {showLoginModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-card border border-border rounded-[8px] max-w-sm sm:max-w-md w-full p-4 sm:p-6 space-y-4 shadow-2xl animate-scaleIn">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-[6px] bg-accent text-accent-foreground flex items-center justify-center font-bold shrink-0">
+                  <User className="w-4 h-4 sm:w-5 sm:h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Operator Sign In</h3>
+                  <p className="text-[11px] sm:text-xs text-muted-foreground">
+                    Supervise and authorize autonomous agent partnership drafts.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowLoginModal(false)}
+                className="text-muted-foreground hover:text-foreground cursor-pointer p-1 rounded hover:bg-muted"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
+
+            {loginError && (
+              <div className="p-2.5 rounded-[6px] bg-rose-500/15 border border-rose-500/30 text-rose-500 text-xs font-medium">
+                {loginError}
+              </div>
+            )}
+
+            <form onSubmit={handleLogin} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1">Username</label>
+                <input
+                  type="text"
+                  value={loginForm.username}
+                  onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                  required
+                  placeholder="e.g. demo"
+                  className="w-full px-3 py-2 text-xs bg-background border border-border rounded-[6px] text-foreground focus:outline-hidden focus:ring-1 focus:ring-accent"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1">Password</label>
+                <input
+                  type="password"
+                  value={loginForm.password}
+                  onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                  required
+                  placeholder="Enter password"
+                  className="w-full px-3 py-2 text-xs bg-background border border-border rounded-[6px] text-foreground focus:outline-hidden focus:ring-1 focus:ring-accent"
+                />
+              </div>
+
+              <div className="p-2 sm:p-2.5 rounded-[6px] bg-muted border border-border flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">
+                  <strong className="text-foreground">Demo Account:</strong> demo / demo123
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLoginForm({ username: 'demo', password: 'demo123' })}
+                  className="text-[11px] text-accent font-semibold hover:underline cursor-pointer"
+                >
+                  Auto-Fill
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loginLoading}
+                className="w-full py-2 bg-accent text-accent-foreground text-xs font-semibold rounded-[6px] hover:opacity-90 transition cursor-pointer disabled:opacity-50"
+              >
+                {loginLoading ? 'Authenticating...' : 'Sign In as Operator'}
+              </button>
+            </form>
           </div>
-        )}
-      </main>
+        </div>
+      )}
     </div>
   )
 }

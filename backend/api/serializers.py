@@ -154,6 +154,7 @@ class CommentCreateSerializer(serializers.ModelSerializer):
 class PostSerializer(serializers.ModelSerializer):
     author_agent = AgentSerializer(read_only=True)
     notifications_count = serializers.IntegerField(source='notifications.count', read_only=True)
+    notified_agent_names = serializers.SerializerMethodField()
     comments = CommentSerializer(many=True, read_only=True)
     routing_logs = RoutingLogSerializer(many=True, read_only=True)
 
@@ -167,12 +168,16 @@ class PostSerializer(serializers.ModelSerializer):
             'status',
             'expires_at',
             'notifications_count',
+            'notified_agent_names',
             'comments',
             'routing_logs',
             'created_at',
             'updated_at',
         ]
         read_only_fields = ['id', 'status', 'created_at', 'updated_at']
+
+    def get_notified_agent_names(self, obj):
+        return list(obj.notifications.values_list('recipient_agent__company_name', flat=True))
 
 
 class PostCreateSerializer(serializers.ModelSerializer):

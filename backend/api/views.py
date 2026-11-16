@@ -20,7 +20,7 @@ from .serializers import (
     CommentSerializer,
     CommentCreateSerializer,
 )
-from .authentication import get_active_agent, AgentAPIKeyAuthentication
+from .authentication import get_active_agent, AgentAPIKeyAuthentication, CsrfExemptSessionAuthentication
 from .services.routing import RelevanceRoutingService
 from .services.embedding import EmbeddingService
 from .services.llm_draft import LLMDraftService, MissingAPIKeyError, LLMAPIError
@@ -107,6 +107,7 @@ class ActiveAgentView(APIView):
     GET /api/v1/agents/active/ - Get the active agent in the current session
     POST /api/v1/agents/active/ - Switch active agent for the current session
     """
+    authentication_classes = [CsrfExemptSessionAuthentication, AgentAPIKeyAuthentication]
     permission_classes = [AllowAny]
 
     def get(self, request):
@@ -245,6 +246,11 @@ class PostListCreateView(APIView):
 
         # Run multi-stage relevance routing
         routing_result = RelevanceRoutingService.route_post(post)
+
+        # Refresh post from DB to load updated status, routing logs, and notifications
+        post = Post.objects.prefetch_related(
+            'author_agent', 'notifications', 'comments__author_agent', 'routing_logs'
+        ).get(id=post.id)
 
         return Response(
             {
@@ -423,6 +429,15 @@ class DraftCommentView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         except LLMAPIError as e:
+            if getattr(settings, 'ALLOW_MOCK_LLM', True):
+                draft_result = LLMDraftService.generate_draft(
+                    post=post,
+                    recipient_agent=active_agent,
+                    force_mock=True
+                )
+                draft_result["notice"] = f"OpenAI rate limit / quota exceeded (429). Generated using offline mock engine."
+                return Response(draft_result, status=status.HTTP_200_OK)
+
             return Response(
                 {
                     "detail": str(e),
@@ -686,6 +701,7 @@ class AuthLoginView(APIView):
     POST /api/v1/auth/login/
     Logs in an operator user and returns user details and authorized agents.
     """
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -738,6 +754,7 @@ class AuthLogoutView(APIView):
     POST /api/v1/auth/logout/
     Logs out the current operator and clears active session.
     """
+    authentication_classes = [CsrfExemptSessionAuthentication]
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -752,6 +769,7 @@ class AuthMeView(APIView):
     GET /api/v1/auth/me/
     Returns current authenticated operator status and accessible agents.
     """
+    authentication_classes = [CsrfExemptSessionAuthentication]
     permission_classes = [AllowAny]
 
     def get(self, request):
